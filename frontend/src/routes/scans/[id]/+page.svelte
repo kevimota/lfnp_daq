@@ -61,6 +61,7 @@
 
   onMount(async () => {
     await Promise.all([fetchRun(), fetchSupplies()]);
+    await fetchLog();
   });
 
   onDestroy(() => {
@@ -175,7 +176,7 @@
       toast.success(`${action.charAt(0).toUpperCase() + action.slice(1)} successful`);
       await fetchRun();
       if (action === 'start') { startPolling(); connectWs(); }
-      if (action === 'stop') { stopPolling(); disconnectWs(); daqStatus = null; }
+      if (action === 'stop') { await fetchLog(); stopPolling(); disconnectWs(); daqStatus = null; liveData = []; }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || `Failed to ${action}`);
     }

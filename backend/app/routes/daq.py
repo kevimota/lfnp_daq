@@ -300,8 +300,12 @@ async def start_run(run_id: int, session: SessionDep):
     dependencies=[Depends(get_current_user)],
 )
 async def stop_run(run_id: int, session: SessionDep):
-    _check_run_exists(run_id, session)
+    run = _check_run_exists(run_id, session)
     result = await _proxy_to_daq(run_id, "stop")
+    run.status = "stopped"
+    run.stopped_at = datetime.now(UTC)
+    session.add(run)
+    session.commit()
     return RunActionResponse(
         success=True,
         run_id=run_id,

@@ -74,7 +74,7 @@ class DAQFSM:
         os.makedirs(self._run_dir, exist_ok=True)
 
         log_path = os.path.join(self._run_dir, "daq.log")
-        self._log_file = open(log_path, "w")
+        self._log_file = open(log_path, "a")
 
         self.log_event(f"Run {run_id} started")
         self._set_state(DAQState.CONFIGURING)
@@ -140,8 +140,8 @@ class DAQFSM:
             return False
 
         self.log_event("Stopped by user")
-        self._close_log()
         self._set_state(DAQState.HALTED)
+        self._close_log()
         self._reset_run()
         return True
 
@@ -150,8 +150,8 @@ class DAQFSM:
             return False
 
         self.log_event(f"FAILED: {error_message}")
-        self._close_log()
         self._set_state(DAQState.FAILED)
+        self._close_log()
         return True
 
     def reset(self) -> bool:
