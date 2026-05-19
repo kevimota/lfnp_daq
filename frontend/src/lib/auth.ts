@@ -9,6 +9,7 @@ interface UserInfo {
   username: string;
   full_name: string | null;
   email: string;
+  is_superuser: boolean;
 }
 
 function createAuthStore() {
