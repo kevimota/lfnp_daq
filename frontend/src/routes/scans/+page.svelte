@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Plus, Play, Square, RotateCcw, Code, List, Trash2, Search } from '@lucide/svelte';
+  import { Plus, Play, Square, RotateCcw, Code, List, Trash2, Search, ArrowLeft } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
   import { goto } from '$app/navigation';
@@ -236,9 +236,13 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-  <h1 class="uppercase text-5xl p-2 bg-neutral">
-    <strong>Scans</strong>
-  </h1>
+  <div class='flex items-center justify-between'>
+    <button class="btn btn-ghost btn-sm" onclick={() => goto('/')}><ArrowLeft class="size-5" /></button>
+    <h1 class="uppercase text-4xl p-2 bg-neutral">  
+      <strong>Scans</strong>
+    </h1>
+  </div>
+  
   <button class="btn btn-primary" onclick={openModal}>
     <Plus class="size-5" /> New Scan
   </button>

@@ -19,7 +19,7 @@
   let loading = $state(true);
   let showEditModal = $state(false);
   let editingUser = $state<UserAdmin | null>(null);
-  let editForm = $state({ username: '', full_name: '', email: '', is_superuser: false });
+  let editForm = $state({ username: '', full_name: '', email: '', is_superuser: false, is_active: true });
   let saving = $state(false);
 
   onMount(fetchUsers);
@@ -48,6 +48,7 @@
       full_name: user.full_name || '',
       email: user.email,
       is_superuser: user.is_superuser,
+      is_active: user.is_active,
     };
     showEditModal = true;
   }
@@ -61,6 +62,7 @@
         full_name: editForm.full_name || null,
         email: editForm.email,
         is_superuser: editForm.is_superuser,
+        is_active: editForm.is_active,
       };
       const { data } = await api.patch(`/users/${editingUser.id}`, body);
       users = users.map(u => u.id === data.id ? data : u);
@@ -90,8 +92,11 @@
   <h1 class="uppercase text-4xl p-2 bg-neutral"><strong>Admin</strong></h1>
 </div>
 
-<div class="overflow-x-auto">
-  <table class="table">
+<div class="card bg-base-200">
+  <div class="card-body">
+    <h3 class="card-title mb-2">Users</h3>
+    <div class="overflow-x-auto">
+      <table class="table">
     <thead>
       <tr>
         <th>Username</th>
@@ -139,7 +144,9 @@
         </tr>
       {/each}
     </tbody>
-  </table>
+      </table>
+    </div>
+  </div>
 </div>
 
 {#if showEditModal && editingUser}
@@ -160,8 +167,12 @@
           <input type="email" class="input input-bordered" bind:value={editForm.email} />
         </label>
         <label class="form-control flex-row items-center gap-3">
-          <input type="checkbox" class="toggle" bind:checked={editForm.is_superuser} />
+          <input type="checkbox" class="toggle toggle-success" bind:checked={editForm.is_superuser} />
           <span class="label-text">Administrator</span>
+        </label>
+        <label class="form-control flex-row items-center gap-3">
+          <input type="checkbox" class="toggle" class:toggle-success={editForm.is_active} class:toggle-error={!editForm.is_active} bind:checked={editForm.is_active} />
+          <span class="label-text">Active</span>
         </label>
       </div>
       <div class="modal-action">

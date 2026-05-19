@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Plus, Pencil, Trash2 } from '@lucide/svelte';
+  import { Plus, Pencil, Trash2, ArrowLeft } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
 
@@ -116,9 +116,12 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-  <h1 class="uppercase text-5xl p-2 bg-neutral">
-    <strong>Hardware</strong>
-  </h1>
+  <div class='flex items-center justify-between'>
+    <button class="btn btn-ghost btn-sm" onclick={() => goto('/')}><ArrowLeft class="size-5" /></button>
+    <h1 class="uppercase text-4xl p-2 bg-neutral">  
+      <strong>hardware</strong>
+    </h1>
+  </div>
   <button class="btn btn-primary" onclick={() => { showNewModal = true; }}>
     <Plus class="size-5" /> New Power Supply
   </button>
