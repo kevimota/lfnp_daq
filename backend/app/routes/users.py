@@ -19,6 +19,7 @@ from ..models.auth import (
     UserPublic,
     UserUpdate,
     UserUpdateId,
+    UpdatePassword,
     UsersPublic,
 )
 from ..models.generic import Message
@@ -140,6 +141,21 @@ def patch_user_me(
     session.commit()
     session.refresh(current_user)
     return current_user
+
+
+@router.patch("/me/password", response_model=Message)
+def update_password_me(
+    session: SessionDep,
+    body: UpdatePassword,
+    current_user: CurrentUser,
+) -> Any:
+    verified, _ = auth.verify_password(body.current_password, current_user.hashed_password)
+    if not verified:
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    current_user.hashed_password = auth.get_password_hash(body.new_password)
+    session.add(current_user)
+    session.commit()
+    return Message(message="Password updated successfully")
 
 
 @router.get(
