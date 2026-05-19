@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlmodel import select
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
+from sqlmodel import select, func
 from typing import List, Optional
 from datetime import datetime, UTC
 from ..routes.users import get_current_user
 import httpx
+import math
 
 from ..core.config import settings
 from ..core.db import SessionDep
@@ -12,6 +13,7 @@ from ..models.daq import (
     DAQRuns,
     DAQConfigResponse,
     DAQRunResponse,
+    PaginatedRunsResponse,
     RunCreateRequest,
     RunActionResponse,
 )
@@ -152,9 +154,26 @@ def create_run(req: RunCreateRequest, session: SessionDep):
     return run
 
 
-@router.get("/runs", response_model=List[DAQRunResponse])
-def list_runs(session: SessionDep):
-    return session.exec(select(DAQRuns).order_by(DAQRuns.created_at.desc())).all()
+@router.get("/runs", response_model=PaginatedRunsResponse)
+def list_runs(
+    session: SessionDep,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None),
+):
+    query = select(DAQRuns)
+    if search:
+        query = query.where(DAQRuns.label.ilike(f"%{search}%"))
+    total = session.exec(select(func.count()).select_from(query.subquery())).one()
+    query = query.order_by(DAQRuns.created_at.desc())
+    items = session.exec(query.offset((page - 1) * per_page).limit(per_page)).all()
+    return PaginatedRunsResponse(
+        items=items,
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=math.ceil(total / per_page) if total else 1,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=DAQRunResponse)

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Plus, Play, Square, RotateCcw, Code, List } from '@lucide/svelte';
+  import { Plus, Play, Square, RotateCcw, Code, List, Trash2, Search } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
   import { goto } from '$app/navigation';
@@ -47,6 +47,10 @@
   let jsonConfig = $state('');
 
   let creating = $state(false);
+  let currentPage = $state(1);
+  let totalPages = $state(1);
+  let searchQuery = $state('');
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   onMount(async () => {
     await Promise.all([fetchRuns(), fetchSupplies()]);
@@ -54,9 +58,21 @@
 
   async function fetchRuns() {
     try {
-      const { data } = await api.get('/daq/runs');
-      runs = data;
+      const params: Record<string, string | number> = { page: currentPage, per_page: 20 };
+      if (searchQuery) params.search = searchQuery;
+      const { data } = await api.get('/daq/runs', { params });
+      runs = data.items;
+      totalPages = data.pages;
     } catch {}
+  }
+
+  function onSearchInput(value: string) {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchQuery = value;
+      currentPage = 1;
+      fetchRuns();
+    }, 300);
   }
 
   async function fetchSupplies() {
@@ -165,6 +181,12 @@
     useJsonEditor = false;
   }
 
+  function resetList() {
+    searchQuery = '';
+    currentPage = 1;
+    fetchRuns();
+  }
+
   function openModal() {
     showNewModal = true;
     if (supplies.length > 0) {
@@ -189,6 +211,17 @@
     } catch {}
   }
 
+  async function deleteRun(run: ScanRun) {
+    if (!confirm(`Delete scan #${run.id}${run.label ? ` (${run.label})` : ''}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/daq/runs/${run.id}`);
+      toast.success(`Scan #${run.id} deleted`);
+      runs = runs.filter(r => r.id !== run.id);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to delete scan');
+    }
+  }
+
   function statusBadge(status: string) {
     const map: Record<string, string> = {
       created: 'badge-ghost',
@@ -210,6 +243,15 @@
     <Plus class="size-5" /> New Scan
   </button>
 </div>
+
+<label class="input input-bordered flex items-center gap-2 mb-4">
+  <Search class="size-4" />
+  <input type="text" class="grow" placeholder="Search by label…"
+    oninput={(e) => onSearchInput(e.target.value)} />
+  {#if searchQuery}
+    <button class="btn btn-ghost btn-xs" onclick={resetList}>✕</button>
+  {/if}
+</label>
 
 <div class="overflow-x-auto">
   <table class="table">
@@ -245,6 +287,9 @@
                 <RotateCcw class="size-4" />
               </button>
             {/if}
+            <button class="btn btn-ghost btn-sm text-error" onclick={() => deleteRun(run)}>
+              <Trash2 class="size-4" />
+            </button>
           </td>
         </tr>
       {:else}
@@ -254,6 +299,19 @@
       {/each}
     </tbody>
   </table>
+</div>
+
+<div class="flex justify-center mt-4">
+  <div class="join">
+    <button class="join-item btn btn-sm" disabled={currentPage <= 1}
+      onclick={() => { currentPage--; fetchRuns(); }}>«</button>
+    {#each Array(totalPages) as _, i}
+      <button class="join-item btn btn-sm" class:btn-active={currentPage === i + 1}
+        onclick={() => { currentPage = i + 1; fetchRuns(); }}>{i + 1}</button>
+    {/each}
+    <button class="join-item btn btn-sm" disabled={currentPage >= totalPages}
+      onclick={() => { currentPage++; fetchRuns(); }}>»</button>
+  </div>
 </div>
 
 {#if showNewModal}

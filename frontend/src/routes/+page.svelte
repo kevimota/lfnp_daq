@@ -17,8 +17,8 @@
   async function fetchOngoingScans() {
     let scans = [];
     try {
-      const { data } = await api.get('/daq/runs');
-      scans = data.filter((r) => r.status === 'running');
+      const { data } = await api.get('/daq/runs', { params: { per_page: 50 } });
+      scans = data.items.filter((r) => r.status === 'running');
     } catch {
       // silently handle
     }

@@ -42,6 +42,14 @@ class DAQRunResponse(SQLModel):
     created_at: datetime
 
 
+class PaginatedRunsResponse(SQLModel):
+    items: List[DAQRunResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
 class RunActionResponse(SQLModel):
     success: bool
     run_id: int
