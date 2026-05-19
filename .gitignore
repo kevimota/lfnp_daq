@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+.venv/
+.venv*/
+
+# uv / pip
+.python-version
+uv.lock
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.pnpm-*
+
+# SvelteKit
+.svelte-kit/
+.output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Data
+/data/daq/raw/
+/data/daq/
+
+# Docker
+.docker/
+
+# Logs
+*.log
+
+CAENHVWrapper*
+test_scan.py

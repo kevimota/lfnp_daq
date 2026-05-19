@@ -1,0 +1,13 @@
+[project]
+name = "daq"
+version = "0.1.0"
+description = "DAQ system for LFNP detectors"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.135.3",
+    "pydantic>=2.13.0",
+    "sqlmodel>=0.0.38",
+    "psycopg[binary]>=3.3.4",
+    "caen-libs>=3.3.0",
+]

@@ -1,0 +1,102 @@
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-300.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-400.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-500.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-600.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-700.ttf') format('truetype');
+}
+
+html {
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: -0.04em;
+  font-size: 18px;
+}
+
+@import "tailwindcss";
+
+@plugin "daisyui" {
+    themes: lfnp_theme;
+};@plugin "daisyui/theme" {
+    name: "lfnp_theme";
+    default: true;
+    prefersdark: false;
+    color-scheme: dark;
+
+    --color-base-100: #10141A; /* #10141a - Deepest Background */
+    --color-base-200: #181C22; /* #181c22 - Surface/Card Background */
+    --color-base-300: #262A31; /* #262a31 - Elevated Surface */
+    --color-base-content: #F1F5F9; /* text-slate-100 */
+
+    --color-primary: #3167FF; /* #31679b - Lab Primary Blue */
+    --color-primary-content: #FFFFFF;
+
+    --color-secondary: #E83B3C; /* #e83b3c - Lab Secondary Red */
+    --color-secondary-content: #FFFFFF;
+
+    --color-accent: #38BDF8; /* text-sky-400 - High-precision highlight */
+    --color-accent-content: #0F172A;
+
+    --color-neutral: #1F2937; /* Neutral slate */
+    --color-neutral-content: #F3F4F6;
+
+    --color-info: #3B82F6; /* System Info Blue */
+    --color-info-content: #FFFFFF;
+
+    --color-success: #22C55E; /* Data Nominal Green */
+    --color-success-content: #FFFFFF;
+
+    --color-warning: #EAB308; /* Status Warning Amber */
+    --color-warning-content: #FFFFFF;
+
+    --color-error: #EF4444; /* Critical Alert Red */
+    --color-error-content: #FFFFFF;
+
+    /* border radius */
+    --radius-selector: 0rem;
+    --radius-field: 0rem;
+    --radius-box: 0rem;
+
+    /* base sizes */
+    --size-selector: 0.25rem;
+    --size-field: 0.25rem;
+    
+
+    /* border size */
+    --border: 1px;
+
+    /* effects */
+    --depth: 1;
+    --noise: 0;
+}

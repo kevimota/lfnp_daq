@@ -1,0 +1,17 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Backend for lfnp daq project"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.135.3",
+    "httpx>=0.28.0",
+    "psycopg[binary]>=3.3.4",
+    "pwdlib[argon2]>=0.3.0",
+    "pydantic>=2.13.0",
+    "pydantic-settings>=2.13.1",
+    "pyjwt>=2.12.1",
+    "sqlalchemy>=2.0.49",
+    "sqlmodel>=0.0.38",
+]

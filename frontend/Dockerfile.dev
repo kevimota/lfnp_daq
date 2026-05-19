@@ -1,0 +1,31 @@
+FROM node:24-slim
+
+ARG UID=1000
+ARG GID=1000
+
+# 1. Enable Corepack as root
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# 2. Set the working directory
+WORKDIR /app
+
+# 3. FIX PERMISSIONS: Ensure the node user owns /app and their own home directory
+# We do this while still being the ROOT user.
+RUN chown -R $UID:$GID /app /home/node
+
+# 4. Switch to the non-root user
+USER $UID
+
+# 5. Define pnpm cache locations in a place the user definitely owns
+ENV PNPM_HOME="/home/node/.local/share/pnpm"
+ENV PATH="${PNPM_HOME}:${PATH}"
+
+# 6. Proceed with install
+COPY --chown=$UID:$GID package.json pnpm-lock.yaml* ./
+
+RUN pnpm install
+
+COPY --chown=$UID:$GID . .
+
+EXPOSE 5173
+CMD ["pnpm", "run", "dev", "--host", "0.0.0.0"]

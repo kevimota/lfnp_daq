@@ -1,0 +1,117 @@
+services:
+  postgresql:
+    image: quay.io/tembo/timeseries-pg:latest
+    restart: always
+    ports:
+      - 5432:5432
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    profiles:
+      - dev
+      - prod  
+
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    user: "${UID:-1000}:${GID:-1000}" 
+    environment:
+      - CI=true
+    ports:
+      - "${DEV_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_svelte_kit:/app/.svelte-kit
+    profiles:
+      - dev
+    env_file:
+      - .env
+
+  frontend-prod:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${PROD_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+    profiles:
+      - prod
+    env_file:
+      - .env
+
+  backend-dev:
+    build:
+      context: ./backend
+      target: dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/backend
+    depends_on:
+      - postgresql
+    profiles:
+      - dev
+    env_file:
+      - .env
+
+  backend-prod:
+    build:
+      context: ./backend
+      target: prod
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgresql
+    profiles:
+      - prod
+    env_file:
+      - .env
+
+  daq-dev:
+    build:
+      context: ./daq
+      target: dev
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./daq:/daq
+      - daq-data:/data/daq/raw
+    depends_on:
+      - postgresql
+    profiles:
+      - dev
+    env_file:
+      - .env
+
+  daq-prod:
+    build:
+      context: ./daq
+      target: prod
+    ports:
+      - "8001:8001"
+    volumes:
+      - daq-data:/data/daq/raw
+    depends_on:
+      - postgresql
+    profiles:
+      - prod
+    env_file:
+      - .env
+
+volumes:
+  postgresql-data:
+    driver: local
+    name: postgresql-data
+  frontend_node_modules:
+  frontend_svelte_kit:
+  daq-data:
+    driver: local
+    name: daq-data
