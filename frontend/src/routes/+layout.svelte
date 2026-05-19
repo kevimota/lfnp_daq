@@ -71,12 +71,6 @@
             <span class="is-drawer-close:hidden text-lg uppercase">Hardware</span>
           </a>
         </li>
-        <li>
-          <button class="is-drawer-close:tooltip is-drawer-close:tooltip-right py-4" data-tip="Settings">
-            <Settings />
-            <span class="is-drawer-close:hidden text-lg uppercase">Settings</span>
-          </button>
-        </li>
       </ul>
     </div>
   </div>

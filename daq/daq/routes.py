@@ -321,3 +321,35 @@ async def resume_scan(run_id: int):
     return {"success": True, "message": "Scan resumed, redoing current point"}
 
 
+@router.get("/storage")
+async def daq_storage():
+    import shutil
+    import os
+    try:
+        usage = shutil.disk_usage("/data/daq")
+        data_size = 0
+        for dirpath, dirnames, filenames in os.walk("/data/daq"):
+            for f in filenames:
+                try:
+                    data_size += os.path.getsize(os.path.join(dirpath, f))
+                except OSError:
+                    pass
+        return {
+            "path": "/data/daq",
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "free_bytes": usage.free,
+            "percent_used": round(usage.used / usage.total * 100, 1),
+            "data_size_bytes": data_size,
+        }
+    except FileNotFoundError:
+        return {
+            "path": "/data/daq",
+            "total_bytes": 0,
+            "used_bytes": 0,
+            "free_bytes": 0,
+            "percent_used": 0,
+            "data_size_bytes": 0,
+        }
+
+
