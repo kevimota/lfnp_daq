@@ -44,7 +44,7 @@
 
   <div class="drawer-side is-drawer-close:overflow-visible">
     <label for="my-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-    <div class="flex min-h-full flex-col items-start bg-base-200 is-drawer-close:w-16 is-drawer-open:w-64">
+    <div class="flex min-h-full flex-col items-start bg-base-200 is-drawer-close:w-16 is-drawer-open:w-48">
       <ul class="menu w-full grow">
         <li>
           <label for="my-drawer" aria-label="open sidebar" class="hidden md:block btn-xl py-4 w-full flex items-center is-drawer-open:justify-end is-drawer-open:px-4 is-drawer-close:justify-center">
