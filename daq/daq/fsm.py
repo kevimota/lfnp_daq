@@ -154,15 +154,6 @@ class DAQFSM:
         self._close_log()
         return True
 
-    def reset(self) -> bool:
-        if self._state not in [DAQState.FINISHED, DAQState.FAILED]:
-            return False
-
-        self.log_event("Reset to HALTED")
-        self._set_state(DAQState.HALTED)
-        self._reset_run()
-        return True
-
     def _close_log(self):
         if self._log_file:
             self._log_file.close()
