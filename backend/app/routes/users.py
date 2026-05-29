@@ -21,10 +21,10 @@ from ..models.auth import (
     UserUpdateId,
     UpdatePassword,
     UsersPublic,
+    Message
 )
-from ..models.generic import Message
 
-from sqlmodel import col, delete, func, select
+from sqlmodel import col, func, select
 
 
 def get_current_user(session: SessionDep, token: TokenDep) -> User:
