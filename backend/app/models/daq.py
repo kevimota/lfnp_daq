@@ -1,4 +1,5 @@
-from sqlmodel import Field, SQLModel, Column, JSON
+from sqlmodel import Field, SQLModel, Column
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime, UTC
 from typing import Optional, List
 
@@ -61,7 +62,7 @@ class DAQConfiguration(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     type: str = Field(default="hv_scan")
-    voltage_points: List = Field(default=[], sa_column=Column(JSON))
+    voltage_points: List = Field(default=[], sa_column=Column(JSONB))
     wait_time_seconds: int
     sample_interval_seconds: float
     number_of_samples: int = Field(default=60)

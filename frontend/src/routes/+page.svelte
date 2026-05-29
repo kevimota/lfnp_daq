@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { Chart, registerables } from 'chart.js';
-  import { Cpu, HardDrive, Activity, Gauge, Thermometer, Droplets, Wind } from '@lucide/svelte';
+  import { Cpu, HardDrive, Activity, Gauge, Thermometer, Droplets, Wind, MonitorCheck } from '@lucide/svelte';
   import api from '$lib/api';
 
   Chart.register(...registerables);
@@ -228,7 +228,7 @@
   <div class="flex-2">
     <div class="card bg-base-200">
       <div class="card-body">
-        <h2 class="card-title text-xl"><Activity class="size-5" /> Environmental Data</h2>
+        <h2 class="card-title text-xl"><MonitorCheck class="size-5" /> Environmental Data</h2>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
           <div>
             <span class="text-sm font-semibold flex items-center gap-1"><Thermometer class="size-4 text-error" /> Temperature</span>
@@ -245,6 +245,13 @@
         </div>
       </div>
     </div>
+    <div class="card bg-base-200 my-4">
+      <div class="card-body">
+        <h2 class="card-title text-xl"><Activity class="size-5" /> Last Scan overview</h2>
+        Add info on last scan
+      </div>
+    </div>
+    
   </div>
 
   <!-- Right Column -->

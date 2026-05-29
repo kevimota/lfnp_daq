@@ -1,42 +1,88 @@
-# sv
+# Frontend
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+Svelte 5 web interface for the LFNP DAQ system. Built with DaisyUI 5 + Tailwind CSS v4.
 
-## Creating a project
+## Pages
 
-If you're seeing this, you've probably already done this step. Congrats!
+| Route | Description |
+|-------|-------------|
+| `/` | Overview dashboard — environmental charts (Chart.js), active scans, power supplies with active channels, recent runs, system health & storage |
+| `/scans` | Paginated scans table with search (300ms debounce), new scan modal, delete per row |
+| `/scans/[id]` | Scan detail — three tabs: Monitor (FSM status + controls + log + live WebSocket data), Edit (form/JSON toggle + visual voltage points editor), Download (file list + ZIP) |
+| `/hardware` | CAEN power supply CRUD table with new/edit modals |
+| `/profile` | Account info form + change password |
+| `/admin` | User management table with admin/active toggles, delete |
 
-```sh
-# create a new project
-npx sv create my-app
+## Development
+
+```bash
+pnpm install
+pnpm run dev --host
 ```
 
-To recreate this project with the same configuration:
+Runs on port 5173 with hot-reload.
 
-```sh
-# recreate this project
-pnpm dlx sv@0.15.0 create --template minimal --types ts --add tailwindcss="plugins:typography" prettier eslint --install pnpm ./
+## Production
+
+```bash
+pnpm build
+pnpm run preview
 ```
 
-## Developing
+## Docker
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+Two Dockerfiles:
 
-```sh
-npm run dev
+- `Dockerfile` — multi-stage production build (served via `@sveltejs/adapter-node` on port 3000)
+- `Dockerfile.dev` — development with hot-reload (port 5173)
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+```bash
+docker compose --profile dev up frontend-dev
+docker compose --profile prod up frontend-prod
 ```
 
-## Building
+## Configuration
 
-To create a production version of your app:
+Dynamic environment variables at runtime (no rebuild needed):
 
-```sh
-npm run build
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PUBLIC_API_URL` | `http://localhost:8000` | Backend REST API URL |
+| `PUBLIC_DAQ_URL` | `http://localhost:8001` | DAQ HTTP/WS URL |
+
+Managed via SvelteKit's `$env/dynamic/public` — set them in `.env` or pass at container runtime.
+
+## Tech Stack
+
+| Library | Purpose |
+|---------|---------|
+| Svelte 5 (runes) | Reactive UI framework |
+| DaisyUI 5 | UI component library |
+| Tailwind CSS v4 | Utility-first styling |
+| Axios | HTTP client with JWT interceptor |
+| Chart.js v4.5 | Environmental data line charts |
+| Lucide Svelte | Icon set |
+| `@sveltejs/adapter-node` | Node.js production adapter |
+
+## Project Structure
+
 ```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+src/
+├── app.css              — Global styles
+├── lib/
+│   ├── api.ts           — Axios client + JWT interceptor
+│   ├── auth.ts          — Auth store (login/logout/user)
+│   ├── toast.ts         — Toast notification store
+│   ├── components/      — Shared components
+│   │   ├── LoginButton.svelte  — Avatar dropdown (profile/admin/logout)
+│   │   └── ToastContainer.svelte — Toast UI
+│   └── assets/          — Static assets (favicon)
+└── routes/
+    ├── +layout.svelte   — Sidebar + navbar + footer
+    ├── +page.svelte     — Overview dashboard
+    ├── [...catchall]/   — 404 catch-all
+    ├── scans/           — Scans list + detail
+    ├── hardware/        — Power supply management
+    ├── profile/         — User profile
+    └── admin/           — User administration
+```
