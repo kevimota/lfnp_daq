@@ -3,7 +3,7 @@ from caen_libs import caenhvwrapper as hv
 from caen_libs._caenhvwrappertypes import SystemType, LinkType
 
 
-class PowerSystemInterface:
+class CaenPSInterface:
     """Interface for CAEN power supply control."""
 
     def __init__(

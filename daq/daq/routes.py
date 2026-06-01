@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 
 from .fsm import DAQFSM, DAQState
 from .models import DAQStatusResponse, DAQInfoResponse
-from .power_interface import PowerSystemInterface
+from .ps_interface import CaenPSInterface
 from .data_writer import DataWriter
 from .websocket import DataBroadcaster
 from .scans import CurrentScanner
@@ -20,7 +20,7 @@ from caen_libs._caenhvwrappertypes import SystemType, LinkType
 
 class ScanContext:
     fsm: DAQFSM
-    power_interface: PowerSystemInterface
+    power_interface: CaenPSInterface
     scanner: CurrentScanner
     task: asyncio.Task
     broadcaster: DataBroadcaster
@@ -28,7 +28,7 @@ class ScanContext:
     def __init__(
         self,
         fsm: DAQFSM,
-        power_interface: PowerSystemInterface,
+        power_interface: CaenPSInterface,
         scanner: CurrentScanner,
         task: asyncio.Task,
         broadcaster: DataBroadcaster,
@@ -246,7 +246,7 @@ async def start_scan(run_id: int):
 
     system_type = SystemType(ps_row.system_type)
     link_type = LinkType(ps_row.link_type)
-    power_interface = PowerSystemInterface(
+    power_interface = CaenPSInterface(
         system_type, link_type, ps_row.arg, ps_row.username, ps_row.password
     )
 

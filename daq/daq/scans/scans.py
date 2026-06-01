@@ -1,17 +1,17 @@
 import asyncio
 from datetime import datetime, UTC
 
-from .fsm import DAQFSM, DAQState
-from .power_interface import PowerSystemInterface
-from .data_writer import DataWriter
-from .websocket import DataBroadcaster
+from ..fsm import DAQFSM, DAQState
+from ..ps_interface import CaenPSInterface
+from ..data_writer import DataWriter
+from ..websocket import DataBroadcaster
 
 
 class CurrentScanner:
     def __init__(
         self,
         fsm: DAQFSM,
-        power_interface: PowerSystemInterface,
+        power_interface: CaenPSInterface,
         data_writer: DataWriter,
         broadcaster: DataBroadcaster,
     ):

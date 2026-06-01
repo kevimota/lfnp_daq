@@ -1,11 +1,11 @@
 import os
-from sqlmodel import Session, create_engine, Field, SQLModel, Column, JSON
+from sqlmodel import Session, create_engine, Field, SQLModel, Column
+from sqlalchemy.dialects.postgresql import JSONB
 from typing import Optional, List
 from datetime import datetime, UTC
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://postgres:oyZHiLyaxVhFwkmV3uqTZhoFN7MYqYtM@postgresql:5432/lfnp_daq",
+    "DATABASE_URL"
 )
 
 engine = create_engine(DATABASE_URL)
@@ -36,7 +36,7 @@ class DAQConfigurationDB(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     type: str = Field(default="hv_scan")
-    voltage_points: List = Field(default=[], sa_column=Column(JSON))
+    voltage_points: List = Field(default=[], sa_column=Column(JSONB))
     wait_time_seconds: int
     sample_interval_seconds: float
     number_of_samples: int = Field(default=60)
