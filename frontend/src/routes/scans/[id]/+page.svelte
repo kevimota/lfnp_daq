@@ -56,6 +56,9 @@
   let liveData: any[] = $state([]);
   let updating = $state(false);
   let runFiles: { name: string; size: number }[] = $state([]);
+  let editLabel = $state('');
+  let editComments = $state('');
+  let updatingRun = $state(false);
 
   const runId = $derived(Number(page.params.id));
 
@@ -73,6 +76,8 @@
     try {
       const { data } = await api.get(`/daq/runs/${runId}`);
       run = data;
+      editLabel = data.label ?? '';
+      editComments = data.comments ?? '';
       await Promise.all([fetchConfig(run.configuration_id), fetchFiles()]);
       if (run.status === 'running') {
         startPolling();
@@ -321,6 +326,25 @@
       updating = false;
     }
   }
+
+  async function updateRunDetails() {
+    updatingRun = true;
+    try {
+      const body: Record<string, string> = {};
+      if (editLabel !== (run?.label ?? '')) body.label = editLabel;
+      if (editComments !== (run?.comments ?? '')) body.comments = editComments;
+      if (Object.keys(body).length === 0) { updatingRun = false; return; }
+      const { data } = await api.patch(`/daq/runs/${runId}`, body);
+      run = data;
+      editLabel = data.label ?? '';
+      editComments = data.comments ?? '';
+      toast.success('Run details saved');
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to update run details');
+    } finally {
+      updatingRun = false;
+    }
+  }
 </script>
 
 <div class="flex items-center gap-4 mb-4">
@@ -399,6 +423,15 @@
         </div>
       </div>
 
+      {#if run?.comments}
+        <div class="card bg-base-200">
+          <div class="card-body">
+            <h3 class="card-title">Comments</h3>
+            <p class="text-base whitespace-pre-wrap">{run.comments}</p>
+          </div>
+        </div>
+      {/if}
+
       <div class="card bg-base-200">
         <div class="card-body">
           <h3 class="card-title">Log</h3>
@@ -417,89 +450,110 @@
     </div>
 
   {:else if activeTab === 'edit'}
-    <div class="card bg-base-200">
-      <div class="card-body">
-        <div class="flex items-center justify-between">
-          <h3 class="card-title">Configuration</h3>
-          <button class="btn btn-ghost btn-sm" onclick={() => { useJsonEditor = !useJsonEditor; if (useJsonEditor) syncEditJson(); }}>
-            <Code class="size-4" /> {useJsonEditor ? 'Form' : 'JSON'}
-          </button>
-        </div>
-        {#if config}
-          <div class="flex flex-col gap-4">
-            {#if useJsonEditor}
-              <label class="form-control">
-                <span class="label-text">Raw Configuration (JSON)</span>
-                <textarea class="textarea textarea-bordered font-mono text-sm min-h-[400px] w-full" bind:value={editJson}></textarea>
-              </label>
-              <button class="btn btn-sm btn-outline self-end" onclick={applyEditJson}>Apply JSON to Form</button>
-            {:else}
-              <div class="grid grid-cols-2 gap-4">
-                <label class="form-control flex flex-col">
-                  <span class="label-text">Wait Time (s)</span>
-                  <input type="number" class="input input-bordered" bind:value={config.wait_time_seconds} />
-                </label>
-                <label class="form-control flex flex-col">
-                  <span class="label-text">Sample Interval (s)</span>
-                  <input type="number" step="0.1" class="input input-bordered" bind:value={config.sample_interval_seconds} />
-                </label>
-                <label class="form-control flex flex-col">
-                  <span class="label-text">Samples per Point</span>
-                  <input type="number" class="input input-bordered" bind:value={config.number_of_samples} />
-                </label>
-                <label class="form-control flex flex-col">
-                  <span class="label-text">End Voltage (V)</span>
-                  <input type="number" class="input input-bordered" bind:value={config.end_voltage} />
-                </label>
-                <label class="form-control flex flex-col">
-                  <span class="label-text">Power Supply</span>
-                  <select class="select select-bordered" bind:value={config.power_supply}>
-                    {#each supplies as ps}
-                      <option value={ps.id}>{ps.name}</option>
-                    {/each}
-                  </select>
-                </label>
-              </div>
-
-              <div class="divider">Voltage Points</div>
-
-              {#each editVoltagePoints as point, pi}
-                <div class="card bg-base-300">
-                  <div class="card-body p-4">
-                    <div class="flex items-center justify-between">
-                      <span class="font-bold">Point {pi + 1}</span>
-                      <button class="btn btn-ghost btn-xs text-error" onclick={() => removeEditPoint(pi)}>Remove</button>
-                    </div>
-                    <div class="grid grid-cols-3 gap-2 font-bold text-sm">
-                      <span>Slot</span>
-                      <span>Channel</span>
-                      <span>Voltage (V)</span>
-                    </div>
-                    {#each point as ch, ci}
-                      <div class="grid grid-cols-3 gap-2 items-center">
-                        <input type="number" class="input input-bordered input-sm" bind:value={ch.slot} />
-                        <input type="number" class="input input-bordered input-sm" bind:value={ch.channel} />
-                        <div class="flex gap-1 items-center">
-                          <input type="number" step="1" class="input input-bordered input-sm flex-1" bind:value={ch.voltage} />
-                          <button class="btn btn-ghost btn-xs text-error" onclick={() => removeEditChannel(pi, ci)}>×</button>
-                        </div>
-                      </div>
-                    {/each}
-                    <button class="btn btn-ghost btn-xs" onclick={() => addEditChannel(pi)}>+ Add Channel</button>
-                  </div>
-                </div>
-              {/each}
-
-              <button class="btn btn-outline btn-sm" onclick={addEditPoint}>+ Add Point</button>
-            {/if}
-
-            <button class="btn btn-primary self-end" onclick={updateConfig} disabled={updating}>
-              {updating ? 'Saving...' : 'Save Configuration'}
+    <div class="flex flex-col gap-4">
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <h3 class="card-title">Run Details</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <label class="form-control flex flex-col self-center">
+              <span class="label-text">Label</span>
+              <input type="text" class="input input-bordered w-full" placeholder="e.g. Test run 2026-06-01" bind:value={editLabel} />
+            </label>
+            <label class="form-control flex flex-col sm:col-span-2">
+              <span class="label-text">Comments</span>
+              <textarea class="textarea textarea-bordered w-full" placeholder="Any notes about this scan..." bind:value={editComments}></textarea>
+            </label>
+            <button class="btn btn-primary sm:col-span-3 justify-self-end" onclick={updateRunDetails} disabled={updatingRun}>
+              {updatingRun ? 'Saving...' : 'Save Details'}
             </button>
           </div>
-        {:else}
-          <p class="text-base-content/50">No configuration data available.</p>
-        {/if}
+        </div>
+      </div>
+
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <div class="flex items-center justify-between">
+            <h3 class="card-title">Configuration</h3>
+            <button class="btn btn-ghost btn-sm" onclick={() => { useJsonEditor = !useJsonEditor; if (useJsonEditor) syncEditJson(); }}>
+              <Code class="size-4" /> {useJsonEditor ? 'Form' : 'JSON'}
+            </button>
+          </div>
+          {#if config}
+            <div class="flex flex-col gap-4">
+              {#if useJsonEditor}
+                <label class="form-control">
+                  <span class="label-text">Raw Configuration (JSON)</span>
+                  <textarea class="textarea textarea-bordered font-mono text-sm min-h-[400px] w-full" bind:value={editJson}></textarea>
+                </label>
+                <button class="btn btn-sm btn-outline self-end" onclick={applyEditJson}>Apply JSON to Form</button>
+              {:else}
+                <div class="grid grid-cols-2 gap-4">
+                  <label class="form-control flex flex-col">
+                    <span class="label-text">Wait Time (s)</span>
+                    <input type="number" class="input input-bordered" bind:value={config.wait_time_seconds} />
+                  </label>
+                  <label class="form-control flex flex-col">
+                    <span class="label-text">Sample Interval (s)</span>
+                    <input type="number" step="0.1" class="input input-bordered" bind:value={config.sample_interval_seconds} />
+                  </label>
+                  <label class="form-control flex flex-col">
+                    <span class="label-text">Samples per Point</span>
+                    <input type="number" class="input input-bordered" bind:value={config.number_of_samples} />
+                  </label>
+                  <label class="form-control flex flex-col">
+                    <span class="label-text">End Voltage (V)</span>
+                    <input type="number" class="input input-bordered" bind:value={config.end_voltage} />
+                  </label>
+                  <label class="form-control flex flex-col">
+                    <span class="label-text">Power Supply</span>
+                    <select class="select select-bordered" bind:value={config.power_supply}>
+                      {#each supplies as ps}
+                        <option value={ps.id}>{ps.name}</option>
+                      {/each}
+                    </select>
+                  </label>
+                </div>
+
+                <div class="divider">Voltage Points</div>
+
+                {#each editVoltagePoints as point, pi}
+                  <div class="card bg-base-300">
+                    <div class="card-body p-4">
+                      <div class="flex items-center justify-between">
+                        <span class="font-bold">Point {pi + 1}</span>
+                        <button class="btn btn-ghost btn-xs text-error" onclick={() => removeEditPoint(pi)}>Remove</button>
+                      </div>
+                      <div class="grid grid-cols-3 gap-2 font-bold text-sm">
+                        <span>Slot</span>
+                        <span>Channel</span>
+                        <span>Voltage (V)</span>
+                      </div>
+                      {#each point as ch, ci}
+                        <div class="grid grid-cols-3 gap-2 items-center">
+                          <input type="number" class="input input-bordered input-sm" bind:value={ch.slot} />
+                          <input type="number" class="input input-bordered input-sm" bind:value={ch.channel} />
+                          <div class="flex gap-1 items-center">
+                            <input type="number" step="1" class="input input-bordered input-sm flex-1" bind:value={ch.voltage} />
+                            <button class="btn btn-ghost btn-xs text-error" onclick={() => removeEditChannel(pi, ci)}>×</button>
+                          </div>
+                        </div>
+                      {/each}
+                      <button class="btn btn-ghost btn-xs" onclick={() => addEditChannel(pi)}>+ Add Channel</button>
+                    </div>
+                  </div>
+                {/each}
+
+                <button class="btn btn-outline btn-sm" onclick={addEditPoint}>+ Add Point</button>
+              {/if}
+
+              <button class="btn btn-primary self-end" onclick={updateConfig} disabled={updating}>
+                {updating ? 'Saving...' : 'Save Configuration'}
+              </button>
+            </div>
+          {:else}
+            <p class="text-base-content/50">No configuration data available.</p>
+          {/if}
+        </div>
       </div>
     </div>
 

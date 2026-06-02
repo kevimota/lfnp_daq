@@ -15,6 +15,7 @@ from ..models.daq import (
     DAQRunResponse,
     PaginatedRunsResponse,
     RunCreateRequest,
+    RunUpdateRequest,
     RunActionResponse,
 )
 
@@ -191,21 +192,17 @@ def get_run(run_id: int, session: SessionDep):
 )
 def update_run(
     run_id: int,
-    status: str,
-    data_path: Optional[str] = None,
-    session: SessionDep = None,
+    req: RunUpdateRequest,
+    session: SessionDep,
 ):
     run = session.get(DAQRuns, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    run.status = status
-    if data_path:
-        run.data_path = data_path
-    if status == "running" and not run.started_at:
-        run.started_at = datetime.now(UTC)
-    if status in ["finished", "completed", "stopped", "failed"]:
-        run.stopped_at = datetime.now(UTC)
+    if req.label is not None:
+        run.label = req.label
+    if req.comments is not None:
+        run.comments = req.comments
 
     session.add(run)
     session.commit()

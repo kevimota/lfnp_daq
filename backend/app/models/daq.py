@@ -51,6 +51,11 @@ class PaginatedRunsResponse(SQLModel):
     pages: int
 
 
+class RunUpdateRequest(SQLModel):
+    label: Optional[str] = None
+    comments: Optional[str] = None
+
+
 class RunActionResponse(SQLModel):
     success: bool
     run_id: int
