@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, UTC
 from typing import Optional
 from sqlmodel import select
@@ -43,6 +43,14 @@ def get_sensor_data(
     limit: Optional[int] = Query(None, ge=1, description="Max results (default: all)"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
 ):
+    now = datetime.now(UTC)
+    if from_ and from_ > now:
+        raise HTTPException(status_code=422, detail="'from' cannot be in the future")
+    if to and to > now:
+        raise HTTPException(status_code=422, detail="'to' cannot be in the future")
+    if from_ and to and to <= from_:
+        raise HTTPException(status_code=422, detail="'to' must be later than 'from'")
+
     if limit is None:
         if from_ is None and to is None:
             limit = 100

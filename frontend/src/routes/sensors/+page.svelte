@@ -3,6 +3,7 @@
   import { Chart, registerables } from 'chart.js';
   import { Activity, Gauge } from '@lucide/svelte';
   import api from '$lib/api';
+  import { toast } from '$lib/toast';
 
   Chart.register(...registerables);
 
@@ -33,6 +34,29 @@
     return fromDatetime !== '' || toDatetime !== '';
   }
 
+  function validateDates(): boolean {
+    const now = new Date();
+    if (fromDatetime && new Date(fromDatetime) > now) {
+      toast.error('"From" cannot be in the future');
+      return false;
+    }
+    if (toDatetime && new Date(toDatetime) > now) {
+      toast.error('"To" cannot be in the future');
+      return false;
+    }
+    if (fromDatetime && toDatetime && new Date(toDatetime) <= new Date(fromDatetime)) {
+      toast.error('"To" must be later than "From"');
+      return false;
+    }
+    return true;
+  }
+
+  function nowISO() {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
   onMount(async () => {
     try {
       const { data } = await api.get('/sensor/names');
@@ -53,6 +77,11 @@
 
   async function fetchData() {
     if (!selectedSensor) return;
+    if (timeFilterActive() && !validateDates()) {
+      readings = [];
+      updateCharts();
+      return;
+    }
     loading = true;
     try {
       const params: Record<string, string> = { name: selectedSensor };
@@ -134,6 +163,7 @@
   }
 
   function onDateChange() {
+    if (!validateDates()) return;
     fetchData();
   }
 </script>
@@ -182,11 +212,11 @@
 
       <label class="form-control flex flex-col">
         <span class="label-text">From</span>
-        <input type="datetime-local" class="input input-bordered" bind:value={fromDatetime} onchange={onDateChange} />
+        <input type="datetime-local" class="input input-bordered" max={nowISO()} bind:value={fromDatetime} onchange={onDateChange} />
       </label>
       <label class="form-control flex flex-col mt-1">
         <span class="label-text">To</span>
-        <input type="datetime-local" class="input input-bordered" bind:value={toDatetime} onchange={onDateChange} />
+        <input type="datetime-local" class="input input-bordered" max={nowISO()} bind:value={toDatetime} onchange={onDateChange} />
       </label>
 
       <button class="btn btn-outline btn-sm mt-3" onclick={fetchData}>
