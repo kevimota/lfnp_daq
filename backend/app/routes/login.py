@@ -9,7 +9,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from ..models.auth import Token
 
 
-router = APIRouter(prefix="/login")
+router = APIRouter(prefix="/login", tags=["Users"])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login/token")
 

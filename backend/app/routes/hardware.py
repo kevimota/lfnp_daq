@@ -7,7 +7,7 @@ from ..routes.users import get_current_user
 from ..core.db import SessionDep
 from ..models.hardware import CaenPS, CaenPSCreate, CaenPSUpdate, CaenPSResponse
 
-router = APIRouter(prefix="/hardware", dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/hardware", dependencies=[Depends(get_current_user)], tags=["Hardware"])
 
 
 @router.post("/caen-ps", response_model=CaenPSResponse)

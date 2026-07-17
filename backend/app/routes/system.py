@@ -3,7 +3,7 @@ import httpx
 
 from ..core.config import settings
 
-router = APIRouter(prefix="/system")
+router = APIRouter(prefix="/system", tags=["System"])
 
 
 @router.get("/health")

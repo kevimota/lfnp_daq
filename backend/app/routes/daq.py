@@ -19,7 +19,7 @@ from ..models.daq import (
     RunActionResponse,
 )
 
-router = APIRouter(prefix="/daq")
+router = APIRouter(prefix="/daq", tags=["DAQ"])
 
 
 # ── Check daq health ────────────────────────────────────────────
