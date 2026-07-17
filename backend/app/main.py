@@ -3,7 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from .core.config import settings
 from .core.db import *
-from .routes import login, users, daq, hardware, system
+from .routes import login, users, daq, hardware, system, sensor
 
 from sqlmodel import Session
 
@@ -13,7 +13,7 @@ app.include_router(users.router)
 app.include_router(daq.router)
 app.include_router(hardware.router)
 app.include_router(system.router)
-
+app.include_router(sensor.router)
 
 with Session(engine) as session:
     init_db(session)
