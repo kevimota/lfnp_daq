@@ -18,6 +18,22 @@ def post_sensor_data(req: SensorDataCreate, session: SessionDep):
     return record
 
 
+@router.get("/names")
+def get_sensor_names(session: SessionDep):
+    names = session.exec(select(SensorData.name).distinct()).all()
+    result = []
+    for name in names:
+        latest = session.exec(
+            select(SensorData.data)
+            .where(SensorData.name == name)
+            .order_by(SensorData.timestamp.desc())
+            .limit(1)
+        ).first()
+        attributes = list(latest.keys()) if latest else []
+        result.append({"name": name, "attributes": attributes})
+    return result
+
+
 @router.get("")
 def get_sensor_data(
     session: SessionDep,

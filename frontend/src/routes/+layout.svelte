@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
-  import { ChartNoAxesCombined, Cpu, List, PanelLeftClose, PanelRightClose, Settings, Tags } from '@lucide/svelte';
+  import { ChartNoAxesCombined, Cpu, List, PanelLeftClose, PanelRightClose, Settings, Tags, Activity } from '@lucide/svelte';
 	import LoginButton from '../lib/components/LoginButton.svelte';
 	import { auth } from '$lib/auth';
 	import ToastContainer from '$lib/components/ToastContainer.svelte';
@@ -69,6 +69,12 @@
           <a href="/hardware" class="is-drawer-close:tooltip is-drawer-close:tooltip-right py-4" data-tip="Hardware">
             <Cpu />
             <span class="is-drawer-close:hidden text-lg uppercase">Hardware</span>
+          </a>
+        </li>
+        <li>
+          <a href="/sensors" class="is-drawer-close:tooltip is-drawer-close:tooltip-right py-4" data-tip="Sensors">
+            <Activity />
+            <span class="is-drawer-close:hidden text-lg uppercase">Sensors</span>
           </a>
         </li>
       </ul>
