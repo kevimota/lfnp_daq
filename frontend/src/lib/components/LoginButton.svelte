@@ -1,6 +1,6 @@
 <script lang="ts">
     import { auth, isLoggedIn, userInfo, getInitials } from '$lib/auth';
-    import { Shield, User, LogOut } from '@lucide/svelte';
+    import { Shield, Settings, User, LogOut } from '@lucide/svelte';
 
     let username = $state('');
     let password = $state('');
@@ -42,6 +42,7 @@
         <ul class="mt-3 z-50 p-2 shadow menu dropdown-content bg-base-200 rounded-box w-52">
             <li><a href="/profile"><User class="size-4" /> Profile</a></li>
             {#if $userInfo?.is_superuser}
+              <li><a href="/settings"><Settings class="size-4" /> Settings</a></li>
               <li><a href="/admin"><Shield class="size-4" /> Admin</a></li>
             {/if}
             <li><button onclick={handleLogout}><LogOut class="size-4" /> Logout</button></li>

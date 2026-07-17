@@ -92,7 +92,7 @@
         params.limit = '100';
       }
       const { data } = await api.get('/sensor', { params });
-      readings = data;
+      readings = data.toReversed();
       updateCharts();
     } catch {
       readings = [];

@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { Chart, registerables } from 'chart.js';
-  import { Cpu, HardDrive, Activity, Gauge, Thermometer, Droplets, Wind, MonitorCheck } from '@lucide/svelte';
+  import { Cpu, HardDrive, Activity, Gauge, MonitorCheck } from '@lucide/svelte';
   import api from '$lib/api';
 
   Chart.register(...registerables);
+
+  const COLORS = ['#EF4444', '#38BDF8', '#EAB308', '#22C55E', '#A855F7', '#F97316'];
 
   interface ScanRun {
     id: number; configuration_id: number; status: string; label: string | null;
@@ -12,6 +14,12 @@
   }
   interface PowerSupply {
     id: number; name: string;
+  }
+  interface SensorReading {
+    name: string; data: Record<string, number>; timestamp: string;
+  }
+  interface ChartConfig {
+    sensor: string; attribute: string; unit: string;
   }
 
   let onGoingScans = $state<any[]>([]);
@@ -21,16 +29,12 @@
   let health = $state<{ backend_status: string; daq_status: string } | null>(null);
   let storage = $state<{ total_bytes: number; used_bytes: number; free_bytes: number; percent_used: number; data_size_bytes: number } | null>(null);
 
+  let chartConfigs: ChartConfig[] = $state([]);
+  let sensorReadings = $state<Record<string, SensorReading[]>>({});
+  let sensorCharts: Chart[] = $state([]);
+
   let scanInterval: ReturnType<typeof setInterval>;
   let systemInterval: ReturnType<typeof setInterval>;
-
-  let tempChart: Chart | null = null;
-  let humidityChart: Chart | null = null;
-  let pressureChart: Chart | null = null;
-
-  let tempCanvas: HTMLCanvasElement;
-  let humidityCanvas: HTMLCanvasElement;
-  let pressureCanvas: HTMLCanvasElement;
 
   function fsmBadge(state: string) {
     const map: Record<string, string> = {
@@ -73,19 +77,13 @@
     } catch {}
     const chMap: Record<number, { slot: number; channel: number; voltage: number }[]> = {};
     for (const scan of scans) {
-      try {
-        const resp = await api.get(`/daq/runs/${scan.id}/status`);
-        scan.state = resp.data.state;
-        scan.hv_point = resp.data.hv_point;
-      } catch {}
+      try { const resp = await api.get(`/daq/runs/${scan.id}/status`); scan.state = resp.data.state; scan.hv_point = resp.data.hv_point; } catch {}
       try {
         const { data: config } = await api.get(`/daq/configs/${scan.configuration_id}`);
         if (config.power_supply && config.voltage_points) {
           const allChannels: { slot: number; channel: number; voltage: number }[] = [];
           for (const point of config.voltage_points) {
-            for (const ch of point) {
-              allChannels.push(ch);
-            }
+            for (const ch of point) { allChannels.push(ch); }
           }
           chMap[config.power_supply] = [...(chMap[config.power_supply] || []), ...allChannels];
         }
@@ -96,126 +94,108 @@
   }
 
   async function fetchSystemData() {
-    try {
-      const { data: psData } = await api.get('/hardware/caen-ps');
-      powerSupplies = psData;
-    } catch {}
+    try { const { data: psData } = await api.get('/hardware/caen-ps'); powerSupplies = psData; } catch {}
     try {
       const { data: runsData } = await api.get('/daq/runs', { params: { per_page: 5 } });
       recentRuns = runsData.items.filter((r: ScanRun) => r.status !== 'running').slice(0, 5);
     } catch {}
-    try {
-      const { data: healthData } = await api.get('/system/health');
-      health = healthData;
-    } catch {}
-    try {
-      const { data: storageData } = await api.get('/system/storage');
-      storage = storageData;
-    } catch {}
+    try { const { data: healthData } = await api.get('/system/health'); health = healthData; } catch {}
+    try { const { data: storageData } = await api.get('/system/storage'); storage = storageData; } catch {}
   }
 
-  function initCharts() {
-    if (!tempCanvas || !humidityCanvas || !pressureCanvas) return;
+  async function fetchSensorSettings() {
+    try {
+      const { data } = await api.get('/settings', { params: { key: 'overview_sensors' } });
+      const raw = data['overview_sensors'];
+      chartConfigs = Array.isArray(raw) ? raw.map((c: any) => ({ sensor: c.sensor ?? '', attribute: c.attribute ?? '', unit: c.unit ?? '' })) : [];
+    } catch {
+      chartConfigs = [];
+    }
+  }
 
-    const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
-    const tempData = Array.from({ length: 24 }, (_, i) =>
-      20 + 3 * Math.sin(i / 4) + (Math.random() - 0.5) * 1.5
-    );
+  async function fetchSensorData() {
+    if (chartConfigs.length === 0) return;
+    const uniqueSensors = [...new Set(chartConfigs.map(c => c.sensor))];
+    const readings: Record<string, SensorReading[]> = {};
+    for (const name of uniqueSensors) {
+      try {
+        const { data } = await api.get('/sensor', { params: { name, limit: 100 } });
+        readings[name] = data.toReversed();
+      } catch {
+        readings[name] = [];
+      }
+    }
+    sensorReadings = readings;
+    await updateSensorCharts();
+  }
 
-    tempChart = new Chart(tempCanvas, {
-      type: 'line',
-      data: {
-        labels: hours,
-        datasets: [{
-          label: 'Temperature (°C)',
-          data: tempData,
-          borderColor: '#EF4444',
-          backgroundColor: 'rgba(239, 68, 68, 0.1)',
-          fill: true,
-          tension: 0.4,
-          pointRadius: 3,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { maxTicksLimit: 8, color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
-          y: { ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+  async function updateSensorCharts() {
+    for (const c of sensorCharts) c.destroy();
+
+    if (chartConfigs.length === 0 || Object.keys(sensorReadings).length === 0) {
+      sensorCharts = [];
+      return;
+    }
+
+    await tick();
+    const newCharts: Chart[] = [];
+    for (let i = 0; i < chartConfigs.length; i++) {
+      const cfg = chartConfigs[i];
+      const canvas = document.getElementById(`sensor-chart-${i}`) as HTMLCanvasElement | null;
+      if (!canvas) continue;
+
+      const readings = sensorReadings[cfg.sensor] ?? [];
+      const labels = readings.map(r => new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      const data = readings.map(r => r.data[cfg.attribute] ?? null);
+
+      const ch = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: cfg.attribute,
+            data,
+            borderColor: COLORS[i % COLORS.length],
+            backgroundColor: COLORS[i % COLORS.length] + '1A',
+            fill: true,
+            tension: 0.4,
+            pointRadius: 3,
+          }],
         },
-      },
-    });
-
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const humidityData = days.map(() => 55 + 15 * Math.sin(Math.random() * 6) + (Math.random() - 0.5) * 5);
-
-    humidityChart = new Chart(humidityCanvas, {
-      type: 'line',
-      data: {
-        labels: days,
-        datasets: [{
-          label: 'Humidity (%)',
-          data: humidityData,
-          borderColor: '#38BDF8',
-          backgroundColor: 'rgba(56, 189, 248, 0.1)',
-          fill: true,
-          tension: 0.4,
-          pointRadius: 3,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
-          y: { ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.1)' }, min: 0, max: 100 },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { maxTicksLimit: 8, color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
+            y: {
+              ticks: { color: '#94A3B8' },
+              grid: { color: 'rgba(148,163,184,0.1)' },
+              ...(cfg.unit ? { title: { display: true, text: cfg.unit, color: '#94A3B8' } } : {}),
+            },
+          },
         },
-      },
-    });
-
-    pressureChart = new Chart(pressureCanvas, {
-      type: 'line',
-      data: {
-        labels: hours,
-        datasets: [{
-          label: 'Pressure (hPa)',
-          data: Array.from({ length: 24 }, (_, i) =>
-            1013 + 5 * Math.sin(i / 6 + 1) + (Math.random() - 0.5) * 2
-          ),
-          borderColor: '#EAB308',
-          backgroundColor: 'rgba(234, 179, 8, 0.1)',
-          fill: true,
-          tension: 0.4,
-          pointRadius: 3,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { maxTicksLimit: 8, color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
-          y: { ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.1)' } },
-        },
-      },
-    });
+      });
+      newCharts.push(ch);
+    }
+    sensorCharts = newCharts;
   }
 
   onMount(async () => {
-    await Promise.all([fetchOngoingScans(), fetchSystemData()]);
-    initCharts();
+    await fetchSensorSettings();
+    await Promise.all([fetchOngoingScans(), fetchSystemData(), fetchSensorData()]);
     scanInterval = setInterval(fetchOngoingScans, 5000);
-    systemInterval = setInterval(fetchSystemData, 30000);
+    systemInterval = setInterval(async () => {
+      await fetchSystemData();
+      await fetchSensorSettings();
+      await fetchSensorData();
+    }, 30000);
   });
 
   onDestroy(() => {
     clearInterval(scanInterval);
     clearInterval(systemInterval);
-    tempChart?.destroy();
-    humidityChart?.destroy();
-    pressureChart?.destroy();
+    for (const c of sensorCharts) c.destroy();
   });
 </script>
 
@@ -224,34 +204,35 @@
 </h1>
 
 <div class="flex flex-col lg:flex-row gap-4 my-2">
-  <!-- Big Card with Charts -->
+  <!-- Left Column -->
   <div class="flex-2">
     <div class="card bg-base-200">
       <div class="card-body">
-        <h2 class="card-title text-xl"><MonitorCheck class="size-5" /> Environmental Data</h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
-          <div>
-            <span class="text-sm font-semibold flex items-center gap-1"><Thermometer class="size-4 text-error" /> Temperature</span>
-            <div class="h-40"><canvas bind:this={tempCanvas}></canvas></div>
+        <h2 class="card-title text-xl"><MonitorCheck class="size-5" /> Sensor Data</h2>
+        {#if chartConfigs.length > 0}
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+            {#each chartConfigs as cfg, i}
+              <div>
+                <span class="text-sm font-semibold" style:color={COLORS[i % COLORS.length]}>{cfg.sensor}</span>
+                {#if cfg.attribute || cfg.unit}
+                  <span class="text-xs text-base-content/50 ml-1">{cfg.attribute}{cfg.unit ? ` (${cfg.unit})` : ''}</span>
+                {/if}
+                <div class="h-44"><canvas id="sensor-chart-{i}"></canvas></div>
+              </div>
+            {/each}
           </div>
-          <div>
-            <span class="text-sm font-semibold flex items-center gap-1"><Droplets class="size-4 text-accent" /> Humidity</span>
-            <div class="h-40"><canvas bind:this={humidityCanvas}></canvas></div>
-          </div>
-          <div>
-            <span class="text-sm font-semibold flex items-center gap-1"><Wind class="size-4 text-warning" /> Air Pressure</span>
-            <div class="h-44"><canvas bind:this={pressureCanvas}></canvas></div>
-          </div>
-        </div>
+        {:else}
+          <p class="text-base-content/50 py-8 text-center">No sensor data configured for the overview.</p>
+        {/if}
       </div>
     </div>
+
     <div class="card bg-base-200 my-4">
       <div class="card-body">
         <h2 class="card-title text-xl"><Activity class="size-5" /> Last Scan overview</h2>
         Add info on last scan
       </div>
     </div>
-    
   </div>
 
   <!-- Right Column -->
