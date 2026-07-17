@@ -1,5 +1,6 @@
 import os
 from sqlmodel import Session, create_engine, Field, SQLModel, Column
+from sqlalchemy import DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from typing import Optional, List
 from datetime import datetime, UTC
@@ -42,7 +43,10 @@ class DAQConfigurationDB(SQLModel, table=True):
     number_of_samples: int = Field(default=60)
     end_voltage: int = Field(default=0)
     power_supply: Optional[int] = Field(default=None, foreign_key="caen_ps.id")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
+    )
 
 
 class DAQRuns(SQLModel, table=True):
@@ -55,6 +59,15 @@ class DAQRuns(SQLModel, table=True):
     data_path: Optional[str] = None
     label: Optional[str] = None
     comments: Optional[str] = None
-    started_at: Optional[datetime] = None
-    stopped_at: Optional[datetime] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: Optional[datetime] = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+    )
+    stopped_at: Optional[datetime] = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_type=DateTime(timezone=True),
+    )

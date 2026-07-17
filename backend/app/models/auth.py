@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from pydantic import EmailStr
 from sqlalchemy import DateTime
@@ -7,7 +7,7 @@ from sqlmodel import Field, SQLModel
 
 
 def get_datetime_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # Shared properties
