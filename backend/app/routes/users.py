@@ -8,7 +8,7 @@ from uuid import UUID
 
 from ..core.db import SessionDep
 from ..core import auth
-from ..core.config import settings
+from ..core.config import config
 
 from .login import TokenDep
 
@@ -21,7 +21,7 @@ from ..models.auth import (
     UserUpdateId,
     UpdatePassword,
     UsersPublic,
-    Message
+    Message,
 )
 
 from sqlmodel import col, func, select
@@ -29,9 +29,7 @@ from sqlmodel import col, func, select
 
 def get_current_user(session: SessionDep, token: TokenDep) -> User:
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = jwt.decode(token, config.SECRET_KEY, algorithms=[config.ALGORITHM])
         token_data = TokenPayload(**payload)
     except (jwt.InvalidTokenError, ValidationError):
         raise HTTPException(
@@ -149,7 +147,9 @@ def update_password_me(
     body: UpdatePassword,
     current_user: CurrentUser,
 ) -> Any:
-    verified, _ = auth.verify_password(body.current_password, current_user.hashed_password)
+    verified, _ = auth.verify_password(
+        body.current_password, current_user.hashed_password
+    )
     if not verified:
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     current_user.hashed_password = auth.get_password_hash(body.new_password)

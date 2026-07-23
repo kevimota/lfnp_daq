@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 import httpx
 
-from ..core.config import settings
+from ..core.config import config
 
 router = APIRouter(prefix="/system", tags=["System"])
 
@@ -11,7 +11,7 @@ async def system_health():
     daq_ok = False
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.DAQ_URL}/health")
+            resp = await client.get(f"{config.DAQ_URL}/health")
             daq_ok = resp.status_code == 200
     except Exception:
         pass
@@ -26,7 +26,7 @@ async def system_health():
 async def system_storage():
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.DAQ_URL}/daq/storage")
+            resp = await client.get(f"{config.DAQ_URL}/daq/storage")
             if resp.status_code == 200:
                 return resp.json()
     except Exception:

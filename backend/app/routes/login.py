@@ -3,7 +3,7 @@ from typing import Annotated
 
 from ..core.db import SessionDep
 from ..core import auth
-from ..core.config import settings
+from ..core.config import config
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from ..models.auth import Token
@@ -29,7 +29,7 @@ def login(
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     elif not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES)
     return Token(
         access_token=auth.create_access_token(
             user.id, expires_delta=access_token_expires

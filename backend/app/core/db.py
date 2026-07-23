@@ -3,11 +3,11 @@ from typing import Annotated
 from sqlmodel import Session, create_engine, select
 from fastapi import Depends
 
-from .config import settings
+from .config import config
 from ..models.auth import User, UserCreate
 from .auth import create_user
 
-engine = create_engine(str(settings.DATABASE_URL))
+engine = create_engine(str(config.DATABASE_URL))
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -23,14 +23,14 @@ def init_db(session: Session) -> None:
     SQLModel.metadata.create_all(engine)
 
     user = session.exec(
-        select(User).where(User.username == settings.FIRST_SUPERUSER)
+        select(User).where(User.username == config.FIRST_SUPERUSER)
     ).first()
     
     if not user:
         user_in = UserCreate(
-            username=settings.FIRST_SUPERUSER,
-            password=settings.FIRST_SUPERUSER_PASSWORD,
-            email=settings.FIRST_SUPERUSER_EMAIL,
+            username=config.FIRST_SUPERUSER,
+            password=config.FIRST_SUPERUSER_PASSWORD,
+            email=config.FIRST_SUPERUSER_EMAIL,
             is_superuser=True,
         )
         user = create_user(session, user_in)

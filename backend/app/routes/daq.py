@@ -6,7 +6,7 @@ from ..routes.users import get_current_user
 import httpx
 import math
 
-from ..core.config import settings
+from ..core.config import config
 from ..core.db import SessionDep
 from ..models.daq import (
     DAQConfiguration,
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/daq", tags=["DAQ"])
 
 @router.get("/health")
 async def health_check():
-    daq_url = settings.DAQ_URL
+    daq_url = config.DAQ_URL
     url = f"{daq_url}/health"
 
     async with httpx.AsyncClient(timeout=10) as client:
@@ -101,7 +101,7 @@ _ACTIVE_RUN_STATUSES = {"running"}
 
 
 async def _proxy_to_daq(run_id: int, action: str, method: str = "POST") -> dict:
-    daq_url = settings.DAQ_URL
+    daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/{action}"
     async with httpx.AsyncClient(timeout=10) as client:
         if method == "GET":
@@ -355,7 +355,7 @@ async def get_run_info(run_id: int, session: SessionDep):
 @router.get("/runs/{run_id}/log")
 async def get_run_log(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
-    daq_url = settings.DAQ_URL
+    daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/log"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -370,7 +370,7 @@ async def get_run_log(run_id: int, session: SessionDep):
 @router.get("/runs/{run_id}/files")
 async def list_run_files(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
-    daq_url = settings.DAQ_URL
+    daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/files"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -385,17 +385,21 @@ async def list_run_files(run_id: int, session: SessionDep):
 @router.get("/runs/{run_id}/files/{filename:path}")
 async def download_run_file(run_id: int, filename: str, session: SessionDep):
     _check_run_exists(run_id, session)
-    daq_url = settings.DAQ_URL
+    daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/files/{filename}"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
-                content_type = resp.headers.get("content-type", "application/octet-stream")
+                content_type = resp.headers.get(
+                    "content-type", "application/octet-stream"
+                )
                 return Response(
                     content=resp.content,
                     media_type=content_type,
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{filename}"'
+                    },
                 )
     except Exception:
         pass
@@ -405,7 +409,7 @@ async def download_run_file(run_id: int, filename: str, session: SessionDep):
 @router.get("/runs/{run_id}/download")
 async def download_run_archive(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
-    daq_url = settings.DAQ_URL
+    daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/download"
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -414,7 +418,9 @@ async def download_run_archive(run_id: int, session: SessionDep):
                 return Response(
                     content=resp.content,
                     media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="run_{run_id}.zip"'},
+                    headers={
+                        "Content-Disposition": f'attachment; filename="run_{run_id}.zip"'
+                    },
                 )
     except Exception:
         pass

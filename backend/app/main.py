@@ -19,7 +19,7 @@ app.include_router(settings.router)
 with Session(engine) as session:
     init_db(session)
 
-if settings.all_cors_origins:
+if config.all_cors_origins:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

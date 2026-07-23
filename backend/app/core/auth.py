@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 import jwt
 from pwdlib import PasswordHash
 
-from .config import settings
+from .config import config
 from ..models.auth import User, UserCreate, UserUpdateId
 
 password_hash = PasswordHash.recommended()
@@ -16,7 +16,7 @@ def create_access_token(subject: str | Any, expires_delta: timedelta) -> str:
     expire = datetime.now(UTC) + expires_delta
     to_encode = {"exp": expire, "sub": str(subject)}
     encoded_jwt = jwt.encode(
-        to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
+        to_encode, config.SECRET_KEY, algorithm=config.ALGORITHM
     )
     return encoded_jwt
 
