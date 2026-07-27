@@ -4,7 +4,7 @@ import { browser } from '$app/environment';
 import { env } from '$env/dynamic/public';
 
 const api = axios.create({
-  baseURL: env.PUBLIC_API_URL || 'http://localhost:8000'
+  baseURL: `${env.PUBLIC_API_URL || 'http://localhost'}:${env.PUBLIC_API_PORT || '8000'}`
 });
 
 api.interceptors.request.use((config) => {

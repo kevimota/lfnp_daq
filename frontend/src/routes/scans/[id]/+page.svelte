@@ -151,7 +151,7 @@
 
   function connectWs() {
     disconnectWs();
-    const daqUrl = env.PUBLIC_DAQ_URL || 'http://localhost:8001';
+    const daqUrl = `${env.PUBLIC_DAQ_URL || 'http://localhost'}:${env.PUBLIC_DAQ_PORT || '8001'}`;
     const wsUrl = daqUrl.replace(/^http/, 'ws') + `/ws/${runId}`;
     ws = new WebSocket(wsUrl);
     ws.onopen = () => { wsConnected = true; };

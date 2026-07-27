@@ -5,11 +5,17 @@ from sqlalchemy.dialects.postgresql import JSONB
 from typing import Optional, List
 from datetime import datetime, UTC
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL"
-)
 
-engine = create_engine(DATABASE_URL)
+def _database_url() -> str:
+    user = os.getenv("DATABASE_USER", "postgres")
+    password = os.getenv("DATABASE_PASSWORD", "")
+    host = os.getenv("DATABASE_HOST", "postgresql")
+    port = os.getenv("DATABASE_PORT", "5432")
+    name = os.getenv("DATABASE_NAME", "lfnp_daq")
+    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}"
+
+
+engine = create_engine(_database_url())
 
 
 def get_session() -> Session:
