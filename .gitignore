@@ -11,7 +11,6 @@ wheels/
 
 # uv / pip
 .python-version
-uv.lock
 
 # Node / pnpm
 node_modules/
