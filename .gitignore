@@ -47,5 +47,9 @@ Thumbs.db
 # Logs
 *.log
 
+CAENComm*
+CAENDigitizer*
+CAENDPPLib*
 CAENHVWrapper*
+CAENVMELib*
 test_scan.py
