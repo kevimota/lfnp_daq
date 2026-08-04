@@ -198,7 +198,7 @@
   function fsmBadge(state: string) {
     const map: Record<string, string> = {
       halted: 'badge-neutral', configuring: 'badge-info', waiting: 'badge-warning',
-      recording: 'badge-success', paused: 'badge-warning', fisished: 'badge-success',
+      recording: 'badge-success', paused: 'badge-warning', finished: 'badge-success',
       failed: 'badge-error',
     };
     return map[state] || 'badge-ghost';

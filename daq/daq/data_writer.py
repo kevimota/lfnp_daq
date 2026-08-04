@@ -34,7 +34,7 @@ class DataWriter:
                 writer.writerow([
                     "timestamp", "slot", "channel",
                     "voltage", "current",
-                    "enabled", "overcurrent", "overvoltage",
+                    "is_on", "overcurrent", "overvoltage",
                 ])
 
             status = data.get("status", {})
@@ -44,7 +44,7 @@ class DataWriter:
                 data.get("channel", 0),
                 data.get("voltage", 0.0),
                 data.get("current", 0.0),
-                status.get("enabled", False),
+                status.get("is_on", False),
                 status.get("overcurrent", False),
                 status.get("overvoltage", False),
             ])

@@ -11,7 +11,7 @@ class DAQState(str, Enum):
     WAITING = "waiting"
     RECORDING = "recording"
     PAUSED = "paused"
-    FINISHED = "fisished"
+    FINISHED = "finished"
     FAILED = "failed"
 
 
