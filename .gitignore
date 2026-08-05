@@ -52,4 +52,5 @@ CAENDigitizer*
 CAENDPPLib*
 CAENHVWrapper*
 CAENVMELib*
+CAENUSBdrvB*
 test_scan.py

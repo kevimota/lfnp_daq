@@ -17,13 +17,17 @@ for prefix in $PREFIXES; do
  
     echo "Installing $(basename "$match")..."
     cd "$match/lib"
-    sh install_arm64
+    sh install_x64
     cd "$ROOT_DIR"
 done
 
 
-PREFIXES="CAENDPPLib CAENHVWrapper"
-#PREFIXES="CAENHVWrapper"
+#PREFIXES="CAENDPPLib CAENHVWrapper"
+# NOTE: CAENUSBdrvB is intentionally NOT installed here. It is a DKMS
+# kernel module that must be built and loaded on the HOST OS (not inside a
+# container). It is only required for USB VME bridges (A2818/A3818/V1718).
+# See README.md for host-side installation steps.
+PREFIXES="CAENHVWrapper"
 
 for prefix in $PREFIXES; do
     match=$(find "$LIB_DIR" -mindepth 1 -maxdepth 1 -type d -name "${prefix}*" | sort | head -n 1)

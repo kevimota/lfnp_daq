@@ -82,6 +82,12 @@ services:
       target: dev
     ports:
       - "8001:8001"
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+      - /dev/a2818_0:/dev/a2818_0
+      - /dev/a3818_0:/dev/a3818_0
+      - /dev/usb:/dev/usb
+    privileged: true
     volumes:
       - ./daq:/daq
       - daq-data:/data/daq/raw
@@ -98,6 +104,12 @@ services:
       target: prod
     ports:
       - "8001:8001"
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    #  - /dev/a2818_0:/dev/a2818_0
+    #  - /dev/a3818_0:/dev/a3818_0
+      - /dev/usb:/dev/usb
+    privileged: true
     volumes:
       - daq-data:/data/daq/raw
     depends_on:
