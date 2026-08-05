@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from .fsm import DAQFSM, DAQState
 from .models import DAQStatusResponse, DAQInfoResponse
 from .ps_interface import CaenPSInterface
+from .digitizer_interface import test_connection_by_id
 from .data_writer import DataWriter
 from .websocket import DataBroadcaster
 from .scans import CurrentScanner
@@ -319,6 +320,23 @@ async def resume_scan(run_id: int):
 
     ctx.fsm.resume()
     return {"success": True, "message": "Scan resumed, redoing current point"}
+
+
+@router.post("/digitizers/test")
+async def test_digitizer(req: dict):
+    return test_connection_by_id(int(req["digitizer_id"]))
+
+
+@router.post("/digitizers/scan")
+async def scan_digitizers(req: dict):
+    from .digitizer_interface import enumerate_digitizers
+
+    devices = enumerate_digitizers(
+        connection_type=int(req.get("connection_type", 0)),
+        conet_node=int(req.get("conet_node", 0)),
+        vme_base_address=int(req.get("vme_base_address", 0)),
+    )
+    return {"devices": devices}
 
 
 @router.get("/storage")

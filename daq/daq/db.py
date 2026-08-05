@@ -37,6 +37,20 @@ class CaenPS(SQLModel, table=True):
     password: str
 
 
+class CaenDigitizer(SQLModel, table=True):
+    __tablename__ = "caen_digitizer"
+    __table_args__ = {"extend_existing": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    board_model: int
+    connection_type: int
+    arg: str
+    conet_node: int = Field(default=0)
+    vme_base_address: int = Field(default=0)
+    comment: str = Field(default="")
+
+
 class DAQConfigurationDB(SQLModel, table=True):
     __tablename__ = "daq_configuration"
     __table_args__ = {"extend_existing": True}

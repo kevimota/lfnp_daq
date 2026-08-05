@@ -235,9 +235,8 @@
   }
 </script>
 
-<div class="flex items-center justify-between mb-4">
+<div class="flex items-center justify-between my-2 mb-4">
   <div class='flex items-center justify-between'>
-    <button class="btn btn-ghost btn-sm" onclick={() => goto('/')}><ArrowLeft class="size-5" /></button>
     <h1 class="uppercase text-4xl p-2 bg-neutral">  
       <strong>Scans</strong>
     </h1>

@@ -199,7 +199,7 @@
   });
 </script>
 
-<h1 class="w-fit uppercase text-4xl my-2 p-2 bg-neutral">
+<h1 class="w-fit uppercase text-4xl my-2 p-2 bg-neutral mb-4">
   <strong>Overview</strong>
 </h1>
 
