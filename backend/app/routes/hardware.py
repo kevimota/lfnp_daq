@@ -121,7 +121,7 @@ async def test_caen_digitizer(digitizer_id: int, session: SessionDep):
 
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/digitizers/test"
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=60, verify=False) as client:
         resp = await client.post(url, json={"digitizer_id": digitizer_id})
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail=resp.text)
@@ -136,7 +136,7 @@ async def scan_caen_digitizers(
 
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/digitizers/scan"
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=60, verify=False) as client:
         resp = await client.post(url, json=payload.model_dump())
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail=resp.text)

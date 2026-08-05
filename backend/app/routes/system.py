@@ -10,7 +10,7 @@ router = APIRouter(prefix="/system", tags=["System"])
 async def system_health():
     daq_ok = False
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5, verify=False) as client:
             resp = await client.get(f"{config.DAQ_URL}/health")
             daq_ok = resp.status_code == 200
     except Exception:
@@ -25,7 +25,7 @@ async def system_health():
 @router.get("/storage")
 async def system_storage():
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5, verify=False) as client:
             resp = await client.get(f"{config.DAQ_URL}/daq/storage")
             if resp.status_code == 200:
                 return resp.json()

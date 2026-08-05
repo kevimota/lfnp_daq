@@ -30,7 +30,7 @@ async def health_check():
     daq_url = config.DAQ_URL
     url = f"{daq_url}/health"
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, verify=False) as client:
         resp = await client.get(url)
         if resp.status_code != 200:
             detail = "DAQ error"
@@ -103,7 +103,7 @@ _ACTIVE_RUN_STATUSES = {"running"}
 async def _proxy_to_daq(run_id: int, action: str, method: str = "POST") -> dict:
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/{action}"
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, verify=False) as client:
         if method == "GET":
             resp = await client.get(url)
         else:
@@ -358,7 +358,7 @@ async def get_run_log(run_id: int, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/log"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return Response(content=resp.text, media_type="text/plain")
@@ -373,7 +373,7 @@ async def list_run_files(run_id: int, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/files"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return resp.json()
@@ -388,7 +388,7 @@ async def download_run_file(run_id: int, filename: str, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/files/{filename}"
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=False) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 content_type = resp.headers.get(
@@ -412,7 +412,7 @@ async def download_run_archive(run_id: int, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/download"
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, verify=False) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return Response(
