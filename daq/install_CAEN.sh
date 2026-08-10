@@ -40,6 +40,7 @@ for prefix in $PREFIXES; do
  
     echo "Installing $(basename "$match")..."
     cd "$match"
+    chmod +x install.sh
     ./install.sh
     cd "$ROOT_DIR"
 done
