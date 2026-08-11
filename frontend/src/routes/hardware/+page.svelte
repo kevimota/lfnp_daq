@@ -665,6 +665,11 @@
           </table>
         </div>
         <p class="text-sm mt-2 text-base-content/60">Pick a device to prefill its link in the new digitizer form.</p>
+      {:else if scanningDigitizers}
+        <div class="flex flex-col items-center gap-3 py-6">
+          <span class="loading loading-spinner loading-lg"></span>
+          <p class="text-base-content/60">Scanning connected digitizers...</p>
+        </div>
       {:else}
         <p class="text-base-content/60">No digitizers found. Check power, cabling, and the connection type, then try again.</p>
       {/if}

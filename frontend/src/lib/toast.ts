@@ -1,6 +1,15 @@
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
 
+let toastSeq = 0;
+
+function nextToastId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `toast-${Date.now().toString(36)}-${(toastSeq++).toString(36)}`;
+}
+
 interface Toast {
   id: string;
   message: string;
@@ -17,7 +26,7 @@ function createToastStore() {
     show(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info', duration: number = 5000) {
       if (!browser) return;
 
-      const id = crypto.randomUUID();
+      const id = nextToastId();
       const newToast = { id, message, type, duration };
 
       update(toasts => [...toasts, newToast]);
