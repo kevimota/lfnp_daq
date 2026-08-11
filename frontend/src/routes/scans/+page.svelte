@@ -22,18 +22,36 @@
     name: string;
   }
 
+  interface CaenDigitizer {
+    id: number;
+    name: string;
+    board_model: number;
+    connection_type: number;
+    arg: string;
+    conet_node: number;
+    vme_base_address: number;
+    comment: string;
+  }
+
   interface ChannelConfig {
     slot: number;
     channel: number;
     voltage: number;
   }
 
+  interface DigitizerChannel {
+    channel: number;
+    enabled: boolean;
+  }
+
   let runs: ScanRun[] = $state([]);
   let supplies: PowerSupply[] = $state([]);
+  let digitizers: CaenDigitizer[] = $state([]);
   let showNewModal = $state(false);
   let useJsonEditor = $state(false);
 
   let newScan = $state({
+    type: 'hv_scan',
     label: '',
     comments: '',
     wait_time_seconds: 30,
@@ -42,6 +60,14 @@
     end_voltage: 0,
     power_supply: 1,
     voltage_points: [[{ slot: 0, channel: 0, voltage: 100 }] as ChannelConfig[]],
+    digitizer_id: null as number | null,
+    trigger_mode: 'random' as 'random' | 'external',
+    trigger_frequency_hz: 1,
+    number_of_triggers: 100,
+    record_length: 2048,
+    post_trigger_size: 1024,
+    input_range_vpp: null as number | null,
+    channels: [] as DigitizerChannel[],
   });
 
   let jsonConfig = $state('');
@@ -53,7 +79,7 @@
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   onMount(async () => {
-    await Promise.all([fetchRuns(), fetchSupplies()]);
+    await Promise.all([fetchRuns(), fetchSupplies(), fetchDigitizers()]);
   });
 
   async function fetchRuns() {
@@ -80,6 +106,44 @@
       const { data } = await api.get('/hardware/caen-ps');
       supplies = data;
     } catch {}
+  }
+
+  async function fetchDigitizers() {
+    try {
+      const { data } = await api.get('/hardware/caen-digitizers');
+      digitizers = data;
+    } catch {}
+  }
+
+  function defaultChannels(): DigitizerChannel[] {
+    return [0, 1, 2, 3].map(i => ({ channel: i, enabled: true }));
+  }
+
+  function setScanType(t: 'hv_scan' | 'digitizer_scan') {
+    newScan.type = t;
+    if (t === 'digitizer_scan') {
+      if (newScan.channels.length === 0) newScan.channels = defaultChannels();
+      if (newScan.digitizer_id == null && digitizers.length > 0) {
+        newScan.digitizer_id = digitizers[0].id;
+      }
+    } else {
+      newScan.digitizer_id = null;
+      newScan.channels = [];
+    }
+  }
+
+  function selectDigitizer(id: number) {
+    newScan.digitizer_id = id;
+  }
+
+  function toggleDigitizerChannel(ch: DigitizerChannel) {
+    if (ch.enabled) {
+      const enabled = newScan.channels.filter(c => c.enabled);
+      if (enabled.length <= 1) return;
+      ch.enabled = false;
+    } else {
+      ch.enabled = true;
+    }
   }
 
   function addPoint() {
@@ -115,6 +179,15 @@
       newScan.end_voltage = config.end_voltage;
       newScan.power_supply = config.power_supply;
       newScan.voltage_points = config.voltage_points;
+      newScan.type = config.type || 'hv_scan';
+      newScan.digitizer_id = config.digitizer_id ?? (config.type === 'digitizer_scan' && digitizers.length > 0 ? digitizers[0].id : null);
+      newScan.trigger_mode = config.trigger_mode ?? 'random';
+      newScan.trigger_frequency_hz = config.trigger_frequency_hz ?? 1;
+      newScan.number_of_triggers = config.number_of_triggers ?? 100;
+      newScan.record_length = config.record_length ?? 2048;
+      newScan.post_trigger_size = config.post_trigger_size ?? 1024;
+      newScan.input_range_vpp = config.input_range_vpp ?? null;
+      newScan.channels = config.channels?.length ? config.channels : defaultChannels();
       syncJson();
     } catch {}
   }
@@ -122,12 +195,25 @@
   function syncJson() {
     jsonConfig = JSON.stringify(
       {
+        type: newScan.type,
         voltage_points: newScan.voltage_points,
         wait_time_seconds: newScan.wait_time_seconds,
         sample_interval_seconds: newScan.sample_interval_seconds,
         number_of_samples: newScan.number_of_samples,
         end_voltage: newScan.end_voltage,
         power_supply: newScan.power_supply,
+        ...(newScan.type === 'digitizer_scan'
+          ? {
+              digitizer_id: newScan.digitizer_id,
+              trigger_mode: newScan.trigger_mode,
+              trigger_frequency_hz: newScan.trigger_frequency_hz,
+              number_of_triggers: newScan.number_of_triggers,
+              record_length: newScan.record_length,
+              post_trigger_size: newScan.post_trigger_size,
+              input_range_vpp: newScan.input_range_vpp,
+              channels: newScan.channels,
+            }
+          : {}),
         label: newScan.label || undefined,
         comments: newScan.comments || undefined,
       },
@@ -147,6 +233,18 @@
       newScan.power_supply = parsed.power_supply ?? newScan.power_supply;
       newScan.label = parsed.label ?? newScan.label;
       newScan.comments = parsed.comments ?? newScan.comments;
+      if (parsed.type) newScan.type = parsed.type;
+      newScan.digitizer_id = parsed.digitizer_id ?? newScan.digitizer_id;
+      newScan.trigger_mode = parsed.trigger_mode ?? newScan.trigger_mode;
+      newScan.trigger_frequency_hz = parsed.trigger_frequency_hz ?? newScan.trigger_frequency_hz;
+      newScan.number_of_triggers = parsed.number_of_triggers ?? newScan.number_of_triggers;
+      newScan.record_length = parsed.record_length ?? newScan.record_length;
+      newScan.post_trigger_size = parsed.post_trigger_size ?? newScan.post_trigger_size;
+      newScan.input_range_vpp = parsed.input_range_vpp ?? newScan.input_range_vpp;
+      if (parsed.channels) newScan.channels = parsed.channels;
+      if (newScan.type === 'digitizer_scan' && newScan.channels.length === 0) {
+        newScan.channels = defaultChannels();
+      }
     } catch {
       toast.error('Invalid JSON');
     }
@@ -155,7 +253,7 @@
   async function createScan() {
     creating = true;
     try {
-      await api.post('/daq/runs', newScan);
+      await api.post('/daq/runs', { ...newScan, label: newScan.label || undefined, comments: newScan.comments || undefined });
       showNewModal = false;
       await fetchRuns();
       resetForm();
@@ -168,6 +266,7 @@
 
   function resetForm() {
     newScan = {
+      type: 'hv_scan',
       label: '',
       comments: '',
       wait_time_seconds: 30,
@@ -176,6 +275,14 @@
       end_voltage: 0,
       power_supply: supplies[0]?.id || 1,
       voltage_points: [[{ slot: 0, channel: 0, voltage: 100 }]],
+      digitizer_id: null as number | null,
+      trigger_mode: 'random' as 'random' | 'external',
+      trigger_frequency_hz: 1,
+      number_of_triggers: 100,
+      record_length: 2048,
+      post_trigger_size: 1024,
+      input_range_vpp: null as number | null,
+      channels: [] as DigitizerChannel[],
     };
     jsonConfig = '';
     useJsonEditor = false;
@@ -250,7 +357,7 @@
 <label class="input input-bordered flex items-center gap-2 mb-4">
   <Search class="size-4" />
   <input type="text" class="grow" placeholder="Search by label…"
-    oninput={(e) => onSearchInput(e.target.value)} />
+    oninput={(e) => onSearchInput((e.currentTarget as HTMLInputElement).value)} />
   {#if searchQuery}
     <button class="btn btn-ghost btn-xs" onclick={resetList}>✕</button>
   {/if}
@@ -327,7 +434,7 @@
         <div class="flex items-end gap-2">
           <label class="form-control flex-1">
             <span class="label-text">Load config from existing run</span>
-            <select class="select select-bordered" onchange={(e) => loadConfigFromRun(Number(e.target.value))}>
+            <select class="select select-bordered" onchange={(e) => loadConfigFromRun(Number((e.currentTarget as HTMLSelectElement).value))}>
               <option value="">— Select a run —</option>
               {#each runs as run}
                 <option value={run.id}>Run {run.id}{run.label ? ` — ${run.label}` : ''}</option>
@@ -358,6 +465,86 @@
               <textarea class="textarea textarea-bordered" bind:value={newScan.comments}></textarea>
             </label>
           </div>
+
+          <div class="form-control">
+            <span class="label-text">Scan Type</span>
+            <div class="join">
+              <button
+                class="join-item btn btn-sm {newScan.type === 'hv_scan' ? 'btn-primary' : ''}"
+                onclick={() => setScanType('hv_scan')}>HV Scan</button>
+              <button
+                class="join-item btn btn-sm {newScan.type === 'digitizer_scan' ? 'btn-primary' : ''}"
+                onclick={() => setScanType('digitizer_scan')}>Digitizer Scan</button>
+            </div>
+          </div>
+
+          {#if newScan.type === 'digitizer_scan'}
+            <div class="divider">Digitizer</div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <label class="form-control">
+                <span class="label-text">Digitizer</span>
+                <select
+                  class="select select-bordered"
+                  value={newScan.digitizer_id}
+                  onchange={(e) => selectDigitizer(Number((e.currentTarget as HTMLSelectElement).value))}>
+                  <option value="">— Select —</option>
+                  {#each digitizers as d}
+                    <option value={d.id}>{d.name} (id {d.id})</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="label-text">Trigger Mode</span>
+                <select class="select select-bordered" bind:value={newScan.trigger_mode}>
+                  <option value="random">Random (internal)</option>
+                  <option value="external">External</option>
+                </select>
+              </label>
+              {#if newScan.trigger_mode === 'random'}
+                <label class="form-control">
+                  <span class="label-text">Trigger Frequency (Hz)</span>
+                  <input type="number" step="0.1" class="input input-bordered"
+                    bind:value={newScan.trigger_frequency_hz} />
+                </label>
+              {/if}
+              <label class="form-control">
+                <span class="label-text">Number of Triggers</span>
+                <input type="number" class="input input-bordered"
+                  bind:value={newScan.number_of_triggers} />
+              </label>
+              <label class="form-control">
+                <span class="label-text">Record Length</span>
+                <input type="number" class="input input-bordered"
+                  bind:value={newScan.record_length} />
+              </label>
+              <label class="form-control">
+                <span class="label-text">Post Trigger Size</span>
+                <input type="number" class="input input-bordered"
+                  bind:value={newScan.post_trigger_size} />
+              </label>
+              <label class="form-control">
+                <span class="label-text">Input Range (Vpp, optional)</span>
+                <input type="number" step="0.5" class="input input-bordered"
+                  bind:value={newScan.input_range_vpp} />
+              </label>
+            </div>
+
+            <div class="form-control">
+              <span class="label-text mb-1">Channels</span>
+              <div class="flex flex-wrap gap-2">
+                {#each newScan.channels as ch}
+                  <button
+                    type="button"
+                    class="btn btn-sm {ch.enabled ? 'btn-primary' : 'btn-ghost'}"
+                    aria-pressed={ch.enabled}
+                    onclick={() => toggleDigitizerChannel(ch)}>
+                    CH {ch.channel}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
 
           <div class="grid grid-cols-2 gap-4">
             <label class="form-control">

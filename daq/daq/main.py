@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import router as daq_router, scan_manager
+from .api import router as daq_router, scan_manager
 
 app = FastAPI(title="DAQ System")
 

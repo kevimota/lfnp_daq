@@ -226,7 +226,7 @@ def enumerate_digitizers(
 
 
 def test_connection_by_id(digitizer_id: int) -> dict:
-    from .db import get_session, CaenDigitizer
+    from ..core.db import get_session, CaenDigitizer
 
     with get_session() as session:
         row = session.get(CaenDigitizer, digitizer_id)

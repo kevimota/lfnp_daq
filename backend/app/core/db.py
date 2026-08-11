@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from typing import Annotated
-from sqlmodel import Session, create_engine, select
+from sqlmodel import Session, create_engine, select, text
 from fastapi import Depends
 
 from .config import config
@@ -21,6 +21,22 @@ def init_db(session: Session) -> None:
 
     # This works because the models are already imported and registered from app.models
     SQLModel.metadata.create_all(engine)
+
+    # Migration: create_all does not alter existing tables
+    for statement in (
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS digitizer_id INTEGER REFERENCES caen_digitizer (id)",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS trigger_mode VARCHAR",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS trigger_frequency_hz DOUBLE PRECISION",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS number_of_triggers INTEGER",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS record_length INTEGER",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS post_trigger_size INTEGER",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS input_range_vpp DOUBLE PRECISION",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS acquisition_timeout_s DOUBLE PRECISION",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS channels JSONB",
+        "ALTER TABLE daq_configuration DROP COLUMN IF EXISTS digitizer_config",
+    ):
+        with engine.begin() as conn:
+            conn.execute(text(statement))
 
     user = session.exec(
         select(User).where(User.username == config.FIRST_SUPERUSER)

@@ -63,12 +63,23 @@ def update_configuration(config_id: int, req: RunCreateRequest, session: Session
     config = session.get(DAQConfiguration, config_id)
     if not config:
         raise HTTPException(status_code=404, detail="Configuration not found")
+    _validate_scan_params(req, session)
+    config.type = req.type or config.type
     config.voltage_points = req.voltage_points
     config.wait_time_seconds = req.wait_time_seconds
     config.sample_interval_seconds = req.sample_interval_seconds
     config.number_of_samples = req.number_of_samples
     config.end_voltage = req.end_voltage
     config.power_supply = req.power_supply
+    config.digitizer_id = req.digitizer_id
+    config.trigger_mode = req.trigger_mode
+    config.trigger_frequency_hz = req.trigger_frequency_hz
+    config.number_of_triggers = req.number_of_triggers
+    config.record_length = req.record_length
+    config.post_trigger_size = req.post_trigger_size
+    config.input_range_vpp = req.input_range_vpp
+    config.acquisition_timeout_s = req.acquisition_timeout_s
+    config.channels = req.channels
     session.add(config)
     session.commit()
     session.refresh(config)
@@ -118,6 +129,47 @@ async def _proxy_to_daq(run_id: int, action: str, method: str = "POST") -> dict:
         return resp.json()
 
 
+def _validate_scan_params(req: RunCreateRequest, session) -> None:
+    """Validate the required parameters for the given scan type."""
+    from ..models.hardware import CaenDigitizer
+
+    check_digitizer = req.type == "digitizer_scan"
+    if check_digitizer:
+        if not req.digitizer_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Digitizer scan requires a digitizer_id",
+            )
+        if req.trigger_mode not in ("random", "external"):
+            raise HTTPException(
+                status_code=400,
+                detail="trigger_mode must be 'random' or 'external'",
+            )
+        if not req.number_of_triggers or req.number_of_triggers <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="number_of_triggers must be > 0 for digitizer scan",
+            )
+        if req.trigger_mode == "random" and not (
+            req.trigger_frequency_hz and req.trigger_frequency_hz > 0
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="trigger_frequency_hz must be > 0 for random trigger mode",
+            )
+        dig_row = session.get(CaenDigitizer, req.digitizer_id)
+        if not dig_row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Digitizer (id={req.digitizer_id}) not found",
+            )
+    elif req.type != "hv_scan":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown scan type: {req.type}",
+        )
+
+
 def _extract_channels(voltage_points: list) -> set[tuple[int, int]]:
     channels = set()
     for point in voltage_points:
@@ -130,14 +182,24 @@ def _extract_channels(voltage_points: list) -> set[tuple[int, int]]:
     "/runs", response_model=DAQRunResponse, dependencies=[Depends(get_current_user)]
 )
 def create_run(req: RunCreateRequest, session: SessionDep):
+    _validate_scan_params(req, session)
     config = DAQConfiguration(
-        type="hv_scan",
+        type=req.type or "hv_scan",
         voltage_points=req.voltage_points,
         wait_time_seconds=req.wait_time_seconds,
         sample_interval_seconds=req.sample_interval_seconds,
         number_of_samples=req.number_of_samples,
         end_voltage=req.end_voltage,
         power_supply=req.power_supply,
+        digitizer_id=req.digitizer_id,
+        trigger_mode=req.trigger_mode,
+        trigger_frequency_hz=req.trigger_frequency_hz,
+        number_of_triggers=req.number_of_triggers,
+        record_length=req.record_length,
+        post_trigger_size=req.post_trigger_size,
+        input_range_vpp=req.input_range_vpp,
+        acquisition_timeout_s=req.acquisition_timeout_s,
+        channels=req.channels,
     )
     session.add(config)
     session.commit()
@@ -275,6 +337,26 @@ async def start_run(run_id: int, session: SessionDep):
                 "conflicting_run_ids": conflicting_run_ids,
             },
         )
+
+    requested_digitizer = config.digitizer_id
+    if requested_digitizer:
+        conflicting_run_ids = []
+        for other in active_runs:
+            other_config = session.get(DAQConfiguration, other.configuration_id)
+            if not other_config:
+                continue
+            other_digitizer = other_config.digitizer_id
+            if other_digitizer == requested_digitizer:
+                conflicting_run_ids.append(other.id)
+        if conflicting_run_ids:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Digitizer already in use by another active run",
+                    "digitizer_id": requested_digitizer,
+                    "conflicting_run_ids": conflicting_run_ids,
+                },
+            )
 
     try:
         result = await _proxy_to_daq(run_id, "start")

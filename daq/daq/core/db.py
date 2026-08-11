@@ -63,6 +63,15 @@ class DAQConfigurationDB(SQLModel, table=True):
     number_of_samples: int = Field(default=60)
     end_voltage: int = Field(default=0)
     power_supply: Optional[int] = Field(default=None, foreign_key="caen_ps.id")
+    digitizer_id: Optional[int] = Field(default=None, foreign_key="caen_digitizer.id")
+    trigger_mode: Optional[str] = Field(default=None)
+    trigger_frequency_hz: Optional[float] = Field(default=None)
+    number_of_triggers: Optional[int] = Field(default=None)
+    record_length: Optional[int] = Field(default=None)
+    post_trigger_size: Optional[int] = Field(default=None)
+    input_range_vpp: Optional[float] = Field(default=None)
+    acquisition_timeout_s: Optional[float] = Field(default=None)
+    channels: Optional[List] = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),
