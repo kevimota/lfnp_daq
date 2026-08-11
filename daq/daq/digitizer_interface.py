@@ -1,7 +1,39 @@
-from dataclasses import dataclass
+import ctypes as ct
+from dataclasses import asdict, dataclass
 from typing import Optional
 
-from caen_libs.caendigitizer import Device, Error, ConnectionType
+from caen_libs._caendigitizertypes import (
+    BoardFamilyCode,
+    EventTypes,
+    FirmwareCode,
+    Never,
+    X743Event,
+)
+from caen_libs.caendigitizer import Device, Error, ConnectionType, lib, _get_l_arg
+
+
+def _patch_dt5743_standard_firmware() -> None:
+    """caen-libs 3.3.0 raises 'Unknown firmware' for standard DRS4 firmware on the
+    X743 family (e.g. DT5743 reports AMC major 1 -> STANDARD_FW_X742 with family
+    XX743). Map that combination to X743 events."""
+    original = Device._Device__get_event_types
+
+    def get_event_types(self):
+        try:
+            return original(self)
+        except RuntimeError:
+            info = self._Device__info
+            if (
+                info.firmware_code == FirmwareCode.STANDARD_FW_X742
+                and info.family_code == BoardFamilyCode.XX743
+            ):
+                return EventTypes(X743Event, Never)
+            raise
+
+    Device._Device__get_event_types = get_event_types
+
+
+_patch_dt5743_standard_firmware()
 
 
 _NUMERIC_ARG_TYPES = {
@@ -37,6 +69,25 @@ def _normalize_arg(connection_type: ConnectionType, arg: str) -> str:
     return arg.strip() or "0"
 
 
+def _open_handle(
+    connection_type: ConnectionType,
+    arg: str,
+    conet_node: int = 0,
+    vme_base_address: int = 0,
+) -> Device:
+    l_arg = _get_l_arg(connection_type, arg)
+    handle = ct.c_int()
+    result = lib.open_digitizer2(
+        connection_type, l_arg, conet_node, vme_base_address, handle
+    )
+    try:
+        return Device(handle.value, connection_type, arg, conet_node, vme_base_address)
+    except Exception:
+        if result == 0:
+            lib.close_digitizer(handle)
+        raise
+
+
 def open_device(
     connection_type: int,
     arg: str,
@@ -45,7 +96,7 @@ def open_device(
 ) -> Device:
     ctype = ConnectionType(connection_type)
     l_arg = _normalize_arg(ctype, arg)
-    return Device.open(ctype, l_arg, conet_node, vme_base_address)
+    return _open_handle(ctype, l_arg, conet_node, vme_base_address)
 
 
 def _read_info(device: Device) -> DigitizerConnectionInfo:
@@ -117,14 +168,21 @@ def test_connection(
     for link in candidates:
         device = None
         try:
-            device = Device.open(ctype, link, conet_node, vme_base_address)
+            device = _open_handle(ctype, link, conet_node, vme_base_address)
             info = _read_info(device)
             return {
                 "success": True,
-                **info.__dict__,
+                **asdict(info),
             }
         except Error as e:
             attempts.append((link, e))
+        except RuntimeError as e:
+            return {
+                "success": False,
+                "error": f"link {link}: {e}",
+                "hint": "The digitizer firmware is not supported by the installed caen-libs version.",
+                "suggested_arg": link,
+            }
         finally:
             if device is not None:
                 device.close()
@@ -148,7 +206,7 @@ def enumerate_digitizers(
     for link in range(max_links):
         device = None
         try:
-            device = Device.open(ctype, str(link), conet_node, vme_base_address)
+            device = _open_handle(ctype, str(link), conet_node, vme_base_address)
             info = _read_info(device)
             devices.append(
                 {
@@ -158,6 +216,8 @@ def enumerate_digitizers(
                 }
             )
         except Error:
+            continue
+        except RuntimeError:
             continue
         finally:
             if device is not None:

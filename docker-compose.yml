@@ -88,9 +88,9 @@ services:
       - /dev/a3818_0:/dev/a3818_0
       - /dev/v1718_0:/dev/v1718_0
       - /dev/v1718_1:/dev/v1718_1
-      - /dev/usb:/dev/usb
     privileged: true
     volumes:
+      - /dev/usb:/dev/usb
       - ./daq:/daq
       - daq-data:/data/daq/raw
       - /run/udev:/run/udev:ro
