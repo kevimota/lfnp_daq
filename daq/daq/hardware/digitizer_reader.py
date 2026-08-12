@@ -11,6 +11,7 @@ import awkward as ak
 import uproot
 
 from caen_libs.caendigitizer import (
+    AcqMode,
     DRS4Frequency,
     Device,
     Error,
@@ -29,6 +30,15 @@ _CHANNELS_PER_X743_GROUP = 2  # MAX_X743_CHANNELS_X_GROUP
 _DRS4_FAMILIES = {BoardFamilyCode.XX742, BoardFamilyCode.XX743}
 
 _DEFAULT_DRS4_FREQUENCY = DRS4Frequency.F_5GHz
+
+# Read out with a slave-terminated MBLT cycle, exactly like CAEN's
+# ReadoutTest sample. Never read on an empty FIFO (an MBLT read with no
+# pending data can block indefinitely).
+_READ_MODE = ReadMode.SLAVE_TERMINATED_READOUT_MBLT
+
+# Max software triggers coalesced into a single step (protects against clock
+# jumps / long pauses producing a huge catch-up burst at once).
+_MAX_TRIGGERS_PER_STEP = 20
 
 _LOG = logging.getLogger("daq.digitizer")
 
@@ -173,6 +183,12 @@ class DigitizerScanner:
         self.enabled_channels = enabled
         dev.set_channel_enable_mask(mask)
 
+        # Match CAEN's ReadoutTest sample: software-controlled acquisition
+        # (required for the SendSWtrigger -> ReadData pattern) and a modest
+        # max-events-per-BLT so each transfer completes promptly.
+        dev.set_acquisition_mode(AcqMode.SW_CONTROLLED)
+        self._attempt(lambda: dev.set_max_num_events_blt(64))
+
         self._attempt(lambda: dev.set_post_trigger_size(int(cfg.get("post_trigger_size", 50))))
 
         if not self.is_drs4:
@@ -276,60 +292,80 @@ class DigitizerScanner:
     def _do_step(self) -> dict:
         dev = self.device
         now = time.monotonic()
-        if self._sw_interval is not None and now - self._last_sw >= self._sw_interval:
-            _LOG.debug(
-                "run=%s point=%s: sw_trigger due (interval=%.3fs)",
-                self._run_id,
-                self._point_index,
-                self._sw_interval,
-            )
-            t_sw = time.monotonic()
-            dev.send_sw_trigger()
-            t_sw = time.monotonic() - t_sw
-            self._last_sw = now
-            self._sw_triggers_sent += 1
-            if t_sw > 2.0:
-                _LOG.warning(
-                    "run=%s point=%s: send_sw_trigger blocked %.2fs",
+
+        read_now = True
+        if self._sw_interval is not None:
+            if now - self._last_sw >= self._sw_interval:
+                due = int((now - self._last_sw) / self._sw_interval)
+                due = max(1, min(due, _MAX_TRIGGERS_PER_STEP))
+                t_sw = time.monotonic()
+                for _ in range(due):
+                    dev.send_sw_trigger()
+                t_sw = time.monotonic() - t_sw
+                self._sw_triggers_sent += due
+                self._last_sw += due * self._sw_interval
+                if now - self._last_sw >= self._sw_interval:
+                    self._last_sw = now
+                _LOG.debug(
+                    "run=%s point=%s: sent %s sw_trigger(s) in %.3fs (interval=%.3fs) then reading",
                     self._run_id,
                     self._point_index,
+                    due,
                     t_sw,
+                    self._sw_interval,
+                )
+                if t_sw > 2.0:
+                    _LOG.warning(
+                        "run=%s point=%s: send_sw_trigger blocked %.2fs (%s triggers)",
+                        self._run_id,
+                        self._point_index,
+                        t_sw,
+                        due,
+                    )
+            else:
+                # No software trigger due yet - the FIFO is empty, and an MBLT
+                # read on an empty FIFO can block indefinitely. Skip the read.
+                read_now = False
+                _LOG.debug(
+                    "run=%s point=%s: no sw_trigger due yet (%.0fms into %.0fms interval) - skip read",
+                    self._run_id,
+                    self._point_index,
+                    (now - self._last_sw) * 1000,
+                    self._sw_interval * 1000,
+                )
+
+        n_events = 0
+        t0 = time.monotonic()
+        if read_now:
+            self._read_attempts += 1
+            t0 = time.monotonic()
+            _LOG.debug(
+                "run=%s point=%s: read_data entering attempt=%s mode=%s",
+                self._run_id,
+                self._point_index,
+                self._read_attempts,
+                _READ_MODE.name,
+            )
+            dev.read_data(_READ_MODE)
+            t_read = time.monotonic() - t0
+            n_events = dev.get_num_events()
+            if t_read > 2.0:
+                _LOG.warning(
+                    "run=%s point=%s: read_data blocked %.2fs (attempt=%s)",
+                    self._run_id,
+                    self._point_index,
+                    t_read,
+                    self._read_attempts,
                 )
             else:
                 _LOG.debug(
-                    "run=%s point=%s: send_sw_trigger done in %.3fs",
+                    "run=%s point=%s: read_data returned in %.3fs attempt=%s events=%s",
                     self._run_id,
                     self._point_index,
-                    t_sw,
+                    t_read,
+                    self._read_attempts,
+                    n_events,
                 )
-
-        self._read_attempts += 1
-        t0 = time.monotonic()
-        _LOG.debug(
-            "run=%s point=%s: read_data entering attempt=%s mode=POLLING",
-            self._run_id,
-            self._point_index,
-            self._read_attempts,
-        )
-        dev.read_data(ReadMode.POLLING)
-        t_read = time.monotonic() - t0
-        n_events = dev.get_num_events()
-        if t_read > 2.0:
-            _LOG.warning(
-                "run=%s point=%s: read_data blocked %.2fs (attempt=%s)",
-                self._run_id,
-                self._point_index,
-                t_read,
-                self._read_attempts,
-            )
-        else:
-            _LOG.debug(
-                "run=%s point=%s: read_data returned in %.3fs attempt=%s",
-                self._run_id,
-                self._point_index,
-                t_read,
-                self._read_attempts,
-            )
         for i in range(n_events or 0):
             info, buf = dev.get_event_info(i)
             evt = dev.decode_event(buf)
