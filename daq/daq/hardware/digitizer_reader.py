@@ -94,6 +94,7 @@ class DigitizerScanner:
         self._baselines: list[float] = []
         self._charges: list[float] = []
         self._waveforms: list[list[np.ndarray]] = []
+        self._read_attempts = 0
 
     @property
     def collected(self) -> int:
@@ -248,6 +249,7 @@ class DigitizerScanner:
         self._collected = 0
         self._sw_triggers_sent = 0
         self._skipped_events = 0
+        self._read_attempts = 0
         self._point_started = time.monotonic()
         self._last_collect_at = self._point_started
         self._stall_warned = False
@@ -275,13 +277,59 @@ class DigitizerScanner:
         dev = self.device
         now = time.monotonic()
         if self._sw_interval is not None and now - self._last_sw >= self._sw_interval:
+            _LOG.debug(
+                "run=%s point=%s: sw_trigger due (interval=%.3fs)",
+                self._run_id,
+                self._point_index,
+                self._sw_interval,
+            )
+            t_sw = time.monotonic()
             dev.send_sw_trigger()
+            t_sw = time.monotonic() - t_sw
             self._last_sw = now
             self._sw_triggers_sent += 1
+            if t_sw > 2.0:
+                _LOG.warning(
+                    "run=%s point=%s: send_sw_trigger blocked %.2fs",
+                    self._run_id,
+                    self._point_index,
+                    t_sw,
+                )
+            else:
+                _LOG.debug(
+                    "run=%s point=%s: send_sw_trigger done in %.3fs",
+                    self._run_id,
+                    self._point_index,
+                    t_sw,
+                )
 
+        self._read_attempts += 1
         t0 = time.monotonic()
-        dev.read_data(ReadMode.POLLING_MBLT)
+        _LOG.debug(
+            "run=%s point=%s: read_data entering attempt=%s mode=POLLING",
+            self._run_id,
+            self._point_index,
+            self._read_attempts,
+        )
+        dev.read_data(ReadMode.POLLING)
+        t_read = time.monotonic() - t0
         n_events = dev.get_num_events()
+        if t_read > 2.0:
+            _LOG.warning(
+                "run=%s point=%s: read_data blocked %.2fs (attempt=%s)",
+                self._run_id,
+                self._point_index,
+                t_read,
+                self._read_attempts,
+            )
+        else:
+            _LOG.debug(
+                "run=%s point=%s: read_data returned in %.3fs attempt=%s",
+                self._run_id,
+                self._point_index,
+                t_read,
+                self._read_attempts,
+            )
         for i in range(n_events or 0):
             info, buf = dev.get_event_info(i)
             evt = dev.decode_event(buf)

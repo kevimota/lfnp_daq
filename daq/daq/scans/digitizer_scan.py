@@ -54,50 +54,88 @@ class DigitizerScan(CurrentScanner):
         last_sample_time = None
         done = target <= 0
 
-        while not done and not self._stop_requested:
-            while self.fsm.state == DAQState.PAUSED and not self._stop_requested:
-                await asyncio.sleep(0.5)
-            if self._stop_requested:
-                break
+        point_started = time.monotonic()
+        _LV_LOG_SECONDS = 5.0
+        _STALL_LOG_SECONDS = 30.0
 
-            if self.fsm.state != DAQState.RECORDING:
-                # Resumed: redo the current point from scratch.
-                self.data_writer.start_point_data(run_dir, point_index)
-                self.fsm.to_recording()
-                samples_recorded = 0
-                last_sample_time = None
-                await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
-
-            now = time.monotonic()
-            if last_sample_time is None or now - last_sample_time >= sample_interval:
-                readings = self.power.read_all_channels(channel_list)
-
-                for reading in readings:
-                    self.data_writer.write_power_data(reading, run_dir, point_index)
-
-                await self.broadcaster.broadcast({
-                    "type": "current_scan",
-                    "point": point_index + 1,
-                    "data": readings,
-                    "digi_triggers": self.digitizer.collected,
-                    "digi_target": target,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                })
-
-                samples_recorded += 1
-                last_sample_time = now
-
-            progress = await self.digitizer.step()
-            done = target > 0 and progress["collected"] >= target
-            if done:
+        async def _liveness():
+            cnt = self.digitizer.collected
+            changed_at = point_started
+            while not self._stop_requested:
+                await asyncio.sleep(_LV_LOG_SECONDS)
+                new_cnt = self.digitizer.collected
+                now = time.monotonic()
+                if new_cnt != cnt:
+                    cnt = new_cnt
+                    changed_at = now
+                stale = now - changed_at
                 _LOG.info(
-                    "run=%s point=%s: target reached (%s/%s triggers)",
-                    self.fsm.run_id,
+                    "run=%s point=%s: waiting… collected=%s/%s elapsed=%.0fs",
+                    run_id,
                     point_index,
-                    progress["collected"],
+                    cnt,
                     target,
+                    now - point_started,
                 )
-                break
-            await asyncio.sleep(0.02)
+                if stale > _STALL_LOG_SECONDS and self.fsm.state == DAQState.RECORDING:
+                    _LOG.warning(
+                        "run=%s point=%s: no new events for %.0fs "
+                        "(collected=%s/%s) - send_sw_trigger/read_data likely blocked",
+                        run_id,
+                        point_index,
+                        stale,
+                        cnt,
+                        target,
+                    )
 
-        await self.digitizer.end_point()
+        liveness = asyncio.create_task(_liveness())
+        try:
+            while not done and not self._stop_requested:
+                while self.fsm.state == DAQState.PAUSED and not self._stop_requested:
+                    await asyncio.sleep(0.5)
+                if self._stop_requested:
+                    break
+
+                if self.fsm.state != DAQState.RECORDING:
+                    # Resumed: redo the current point from scratch.
+                    self.data_writer.start_point_data(run_dir, point_index)
+                    self.fsm.to_recording()
+                    samples_recorded = 0
+                    last_sample_time = None
+                    await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
+
+                now = time.monotonic()
+                if last_sample_time is None or now - last_sample_time >= sample_interval:
+                    readings = self.power.read_all_channels(channel_list)
+
+                    for reading in readings:
+                        self.data_writer.write_power_data(reading, run_dir, point_index)
+
+                    await self.broadcaster.broadcast({
+                        "type": "current_scan",
+                        "point": point_index + 1,
+                        "data": readings,
+                        "digi_triggers": self.digitizer.collected,
+                        "digi_target": target,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    })
+
+                    samples_recorded += 1
+                    last_sample_time = now
+
+                progress = await self.digitizer.step()
+                done = target > 0 and progress["collected"] >= target
+                if done:
+                    _LOG.info(
+                        "run=%s point=%s: target reached (%s/%s triggers)",
+                        self.fsm.run_id,
+                        point_index,
+                        progress["collected"],
+                        target,
+                    )
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            liveness.cancel()
+            await asyncio.gather(liveness, return_exceptions=True)
+            await self.digitizer.end_point()
