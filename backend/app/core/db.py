@@ -27,6 +27,7 @@ def init_db(session: Session) -> None:
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS digitizer_id INTEGER REFERENCES caen_digitizer (id)",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS trigger_mode VARCHAR",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS trigger_frequency_hz DOUBLE PRECISION",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS sampling_frequency_hz DOUBLE PRECISION",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS number_of_triggers INTEGER",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS record_length INTEGER",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS post_trigger_size INTEGER",

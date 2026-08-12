@@ -30,6 +30,7 @@
     digitizer_id: number | null;
     trigger_mode: 'random' | 'external' | null;
     trigger_frequency_hz: number | null;
+    sampling_frequency_hz: number | null;
     number_of_triggers: number | null;
     record_length: number | null;
     post_trigger_size: number | null;
@@ -79,6 +80,7 @@
   let editDigitizerId = $state<number | null>(null);
   let editTriggerMode = $state<'random' | 'external'>('random');
   let editTriggerFrequencyHz = $state<number>(1);
+  let editSamplingFrequencyHz = $state<number | null>(null);
   let editNumberOfTriggers = $state<number>(100);
   let editRecordLength = $state<number>(2048);
   let editPostTriggerSize = $state<number>(1024);
@@ -132,13 +134,14 @@
       editDigitizerId = data.digitizer_id ?? null;
       editTriggerMode = data.trigger_mode ?? 'random';
       editTriggerFrequencyHz = data.trigger_frequency_hz ?? 1;
+      editSamplingFrequencyHz = data.sampling_frequency_hz ?? null;
       editNumberOfTriggers = data.number_of_triggers ?? 100;
       editRecordLength = data.record_length ?? 2048;
       editPostTriggerSize = data.post_trigger_size ?? 1024;
       editInputRangeVpp = data.input_range_vpp ?? null;
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
-        : [0, 1, 2, 3].map(i => ({ channel: i, enabled: true }));
+        : (data.type === 'digitizer_scan' ? defaultChannels() : []);
       configJson = JSON.stringify(data.voltage_points, null, 2);
     } catch {}
   }
@@ -157,8 +160,16 @@
     } catch {}
   }
 
+  function channelCountForBoard(board_model: number): number {
+    if (board_model === 18) return 16; // DT5742: 2 groups x 8 channels
+    if (board_model === 27) return 8; // DT5743: 4 groups x 2 channels
+    return 8;
+  }
+
   function defaultChannels(): DigitizerChannel[] {
-    return [0, 1, 2, 3].map(i => ({ channel: i, enabled: true }));
+    const dm = digitizers.find(d => d.id === editDigitizerId)?.board_model ?? 0;
+    const n = channelCountForBoard(dm);
+    return Array.from({ length: n }, (_, i) => ({ channel: i, enabled: true }));
   }
 
   function setEditScanType(t: 'hv_scan' | 'digitizer_scan') {
@@ -347,6 +358,7 @@
             digitizer_id: editDigitizerId,
             trigger_mode: editTriggerMode,
             trigger_frequency_hz: editTriggerFrequencyHz,
+            sampling_frequency_hz: editSamplingFrequencyHz,
             number_of_triggers: editNumberOfTriggers,
             record_length: editRecordLength,
             post_trigger_size: editPostTriggerSize,
@@ -371,6 +383,7 @@
         editDigitizerId = parsed.digitizer_id ?? editDigitizerId;
         editTriggerMode = parsed.trigger_mode ?? editTriggerMode;
         editTriggerFrequencyHz = parsed.trigger_frequency_hz ?? editTriggerFrequencyHz;
+        if (parsed.sampling_frequency_hz != null) editSamplingFrequencyHz = parsed.sampling_frequency_hz;
         editNumberOfTriggers = parsed.number_of_triggers ?? editNumberOfTriggers;
         editRecordLength = parsed.record_length ?? editRecordLength;
         editPostTriggerSize = parsed.post_trigger_size ?? editPostTriggerSize;
@@ -422,6 +435,7 @@
         digitizer_id: editScanType === 'digitizer_scan' ? editDigitizerId : null,
         trigger_mode: editScanType === 'digitizer_scan' ? editTriggerMode : null,
         trigger_frequency_hz: editScanType === 'digitizer_scan' ? editTriggerFrequencyHz : null,
+        sampling_frequency_hz: editScanType === 'digitizer_scan' ? editSamplingFrequencyHz : null,
         number_of_triggers: editScanType === 'digitizer_scan' ? editNumberOfTriggers : null,
         record_length: editScanType === 'digitizer_scan' ? editRecordLength : null,
         post_trigger_size: editScanType === 'digitizer_scan' ? editPostTriggerSize : null,
@@ -436,6 +450,7 @@
       editDigitizerId = data.digitizer_id ?? null;
       editTriggerMode = data.trigger_mode ?? 'random';
       editTriggerFrequencyHz = data.trigger_frequency_hz ?? 1;
+      editSamplingFrequencyHz = data.sampling_frequency_hz ?? null;
       editNumberOfTriggers = data.number_of_triggers ?? 100;
       editRecordLength = data.record_length ?? 2048;
       editPostTriggerSize = data.post_trigger_size ?? 1024;
@@ -689,6 +704,11 @@
                       <span class="label-text">Record Length</span>
                       <input type="number" class="input input-bordered"
                         bind:value={editRecordLength} />
+                    </label>
+                    <label class="form-control flex flex-col">
+                      <span class="label-text">Sampling Frequency (Hz, optional)</span>
+                      <input type="number" class="input input-bordered" step="100000000"
+                        bind:value={editSamplingFrequencyHz} placeholder="e.g. 5000000000 (hardware default if empty)" />
                     </label>
                     <label class="form-control flex flex-col">
                       <span class="label-text">Post Trigger Size</span>

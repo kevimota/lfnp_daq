@@ -74,6 +74,7 @@ def update_configuration(config_id: int, req: RunCreateRequest, session: Session
     config.digitizer_id = req.digitizer_id
     config.trigger_mode = req.trigger_mode
     config.trigger_frequency_hz = req.trigger_frequency_hz
+    config.sampling_frequency_hz = req.sampling_frequency_hz
     config.number_of_triggers = req.number_of_triggers
     config.record_length = req.record_length
     config.post_trigger_size = req.post_trigger_size
@@ -167,6 +168,11 @@ def _validate_scan_params(req: RunCreateRequest, session) -> None:
                 status_code=400,
                 detail="trigger_frequency_hz must be > 0 for random trigger mode",
             )
+        if req.sampling_frequency_hz is not None and req.sampling_frequency_hz <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="sampling_frequency_hz must be > 0",
+            )
         dig_row = session.get(CaenDigitizer, req.digitizer_id)
         if not dig_row:
             raise HTTPException(
@@ -204,6 +210,7 @@ def create_run(req: RunCreateRequest, session: SessionDep):
         digitizer_id=req.digitizer_id,
         trigger_mode=req.trigger_mode,
         trigger_frequency_hz=req.trigger_frequency_hz,
+        sampling_frequency_hz=req.sampling_frequency_hz,
         number_of_triggers=req.number_of_triggers,
         record_length=req.record_length,
         post_trigger_size=req.post_trigger_size,

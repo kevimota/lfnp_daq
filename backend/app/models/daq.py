@@ -21,6 +21,7 @@ class DAQConfigResponse(SQLModel):
     digitizer_id: Optional[int] = None
     trigger_mode: Optional[str] = None
     trigger_frequency_hz: Optional[float] = None
+    sampling_frequency_hz: Optional[float] = None
     number_of_triggers: Optional[int] = None
     record_length: Optional[int] = None
     post_trigger_size: Optional[int] = None
@@ -40,6 +41,7 @@ class RunCreateRequest(SQLModel):
     digitizer_id: Optional[int] = None
     trigger_mode: Optional[str] = None
     trigger_frequency_hz: Optional[float] = None
+    sampling_frequency_hz: Optional[float] = None
     number_of_triggers: Optional[int] = None
     record_length: Optional[int] = None
     post_trigger_size: Optional[int] = None
@@ -94,6 +96,7 @@ class DAQConfiguration(SQLModel, table=True):
     digitizer_id: Optional[int] = Field(default=None, foreign_key="caen_digitizer.id")
     trigger_mode: Optional[str] = Field(default=None)
     trigger_frequency_hz: Optional[float] = Field(default=None)
+    sampling_frequency_hz: Optional[float] = Field(default=None)
     number_of_triggers: Optional[int] = Field(default=None)
     record_length: Optional[int] = Field(default=None)
     post_trigger_size: Optional[int] = Field(default=None)

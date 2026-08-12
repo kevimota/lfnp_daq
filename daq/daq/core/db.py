@@ -66,6 +66,7 @@ class DAQConfigurationDB(SQLModel, table=True):
     digitizer_id: Optional[int] = Field(default=None, foreign_key="caen_digitizer.id")
     trigger_mode: Optional[str] = Field(default=None)
     trigger_frequency_hz: Optional[float] = Field(default=None)
+    sampling_frequency_hz: Optional[float] = Field(default=None)
     number_of_triggers: Optional[int] = Field(default=None)
     record_length: Optional[int] = Field(default=None)
     post_trigger_size: Optional[int] = Field(default=None)

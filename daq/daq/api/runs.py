@@ -138,6 +138,7 @@ async def start_scan(run_id: int):
             config["digitizer_id"] = config_row.digitizer_id
             config["trigger_mode"] = config_row.trigger_mode
             config["trigger_frequency_hz"] = config_row.trigger_frequency_hz
+            config["sampling_frequency_hz"] = config_row.sampling_frequency_hz
             config["number_of_triggers"] = config_row.number_of_triggers
             config["record_length"] = config_row.record_length
             config["post_trigger_size"] = config_row.post_trigger_size

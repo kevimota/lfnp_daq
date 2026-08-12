@@ -12,24 +12,14 @@ import uproot
 
 from caen_libs.caendigitizer import (
     AcqMode,
-    DRS4Frequency,
     Device,
     Error,
     ReadMode,
     TriggerMode,
-    Uint16Event,
-    Uint8Event,
-    X743Event,
 )
-from caen_libs._caendigitizertypes import BoardFamilyCode
 
+from .digitizer_driver import DigitizerDriver, build_driver
 from .digitizer_interface import open_device
-
-_CHANNELS_PER_X743_GROUP = 2  # MAX_X743_CHANNELS_X_GROUP
-
-_DRS4_FAMILIES = {BoardFamilyCode.XX742, BoardFamilyCode.XX743}
-
-_DEFAULT_DRS4_FREQUENCY = DRS4Frequency.F_5GHz
 
 # Read out with a slave-terminated MBLT cycle, exactly like CAEN's
 # ReadoutTest sample. Never read on an empty FIFO (an MBLT read with no
@@ -67,6 +57,7 @@ class DigitizerScanner:
 
         self.device: Optional[Device] = None
         self.info = None
+        self.driver: Optional[DigitizerDriver] = None
         self.is_drs4 = False
         self.enabled_channels: list[int] = []
         self.record_length = 0
@@ -131,7 +122,8 @@ class DigitizerScanner:
         dev, info = await self._run(self._do_open)
         self.device = dev
         self.info = info
-        self.is_drs4 = self.info.family_code in _DRS4_FAMILIES
+        self.driver = build_driver(info)
+        self.is_drs4 = self.driver.drs4
         _LOG.info(
             "digitizer opened in %.2fs: %s serial=%s channels=%s drs4=%s",
             time.monotonic() - t0,
@@ -169,7 +161,8 @@ class DigitizerScanner:
             dev.set_sw_trigger_mode(TriggerMode.ACQ_ONLY)
             dev.set_ext_trigger_input_mode(TriggerMode.DISABLED)
 
-        n_total = self.info.channels
+        driver = self.driver
+        n_total = driver.n_total
         mask = 0
         enabled = []
         for ch in cfg.get("channels", []):
@@ -181,7 +174,8 @@ class DigitizerScanner:
             mask = (1 << n_total) - 1
             enabled = list(range(n_total))
         self.enabled_channels = enabled
-        dev.set_channel_enable_mask(mask)
+        driver.enabled_channels = enabled
+        driver.set_enable_mask(dev, mask)
 
         # Match CAEN's ReadoutTest sample: software-controlled acquisition
         # (required for the SendSWtrigger -> ReadData pattern) and a modest
@@ -189,27 +183,32 @@ class DigitizerScanner:
         dev.set_acquisition_mode(AcqMode.SW_CONTROLLED)
         self._attempt(lambda: dev.set_max_num_events_blt(64))
 
-        self._attempt(lambda: dev.set_post_trigger_size(int(cfg.get("post_trigger_size", 50))))
+        defaults = driver.config_defaults()
+        self._attempt(
+            lambda: dev.set_post_trigger_size(int(cfg.get("post_trigger_size", defaults.get("post_trigger_size", 50))))
+        )
 
-        if not self.is_drs4:
+        if not driver.drs4:
             record_length = cfg.get("record_length")
             if record_length:
                 self._attempt(lambda: dev.set_record_length(int(record_length)))
         self.record_length = self._attempt(dev.get_record_length) or 0
 
-        self.input_range_vpp = float(cfg["input_range_vpp"]) if cfg.get("input_range_vpp") else None
-        if self.is_drs4:
-            self._configure_drs4()
-            self.calibrated = self.drs4_time is not None
-        else:
-            self.calibrated = self.input_range_vpp is not None
+        driver.input_range_vpp = float(cfg["input_range_vpp"]) if cfg.get("input_range_vpp") else None
+        driver.configure_frequency(dev, cfg)
+        self.input_range_vpp = driver.input_range_vpp
+        self.calibrated = driver.calibrated
+        self.drs4_time = driver.drs4_time
 
         dev.malloc_readout_buffer()
         dev.allocate_event()
         _LOG.info(
-            "digitizer configured: mode=%s enabled_channels=%s record_length=%s "
-            "input_range_vpp=%s calibrated=%s",
+            "digitizer configured: mode=%s groups=%s channels_per_group=%s total_channels=%s "
+            "enabled_channels=%s record_length=%s input_range_vpp=%s calibrated=%s",
             self._mode,
+            driver.n_groups,
+            driver.channels_per_group,
+            driver.n_total,
             self.enabled_channels,
             self.record_length,
             self.input_range_vpp,
@@ -219,21 +218,6 @@ class DigitizerScanner:
 
     async def configure(self, cfg: dict):
         return await self._run(self._do_configure, cfg)
-
-    def _configure_drs4(self):
-        dev = self.device
-        try:
-            dev.set_drs4_sampling_frequency(_DEFAULT_DRS4_FREQUENCY)
-            dev.load_drs4_correction_data(_DEFAULT_DRS4_FREQUENCY)
-            dev.enable_drs4_correction()
-        except Error:
-            self.drs4_time = None
-            return
-        try:
-            corr = dev.get_correction_tables(_DEFAULT_DRS4_FREQUENCY)
-            self.drs4_time = list(corr.time)
-        except Error:
-            self.drs4_time = None
 
     def _attempt(self, fn: Callable[[], int]):
         try:
@@ -465,50 +449,7 @@ class DigitizerScanner:
 
     def _extract_event(self, evt):
         """Return (waveforms: list[np.ndarray] aligned to enabled_channels, scalars: dict) or None."""
-        if isinstance(evt, X743Event):
-            return self._extract_x743(evt)
-        if isinstance(evt, (Uint16Event, Uint8Event)):
-            return self._extract_uint(evt)
-        return None
-
-    def _extract_x743(self, evt):
-        waveforms = [None] * len(self.enabled_channels)
-        scalars = {"tdc": 0, "peak": 0.0, "baseline": 0.0, "charge": 0.0, "start_cell": 0}
-        found_scalars = False
-        for g_idx, group in enumerate(evt.data_group):
-            if group is None:
-                continue
-            if not found_scalars:
-                scalars = {
-                    "tdc": int(group.tdc),
-                    "peak": float(group.peak),
-                    "baseline": float(group.baseline),
-                    "charge": float(group.charge),
-                    "start_cell": int(group.start_index_cell),
-                }
-                found_scalars = True
-            arrays = group.data_channel
-            for j, arr in enumerate(arrays):
-                ch = g_idx * _CHANNELS_PER_X743_GROUP + j
-                if ch in self.enabled_channels:
-                    waveforms[self.enabled_channels.index(ch)] = np.asarray(arr, dtype=np.float32)
-        if not any(w is not None for w in waveforms):
-            return None
-        return waveforms, scalars
-
-    def _extract_uint(self, evt):
-        arrays = evt.data_channel
-        waveforms = [None] * len(self.enabled_channels)
-        for ch in self.enabled_channels:
-            if ch < len(arrays):
-                arr = np.asarray(arrays[ch], dtype=np.float32)
-                if self.calibrated and self.input_range_vpp:
-                    arr = (arr / (1 << self.info.adc_n_bits) - 0.5) * self.input_range_vpp
-                waveforms[self.enabled_channels.index(ch)] = arr
-        if not any(w is not None for w in waveforms):
-            return None
-        scalars = {"tdc": 0, "peak": 0.0, "baseline": 0.0, "charge": 0.0, "start_cell": 0}
-        return waveforms, scalars
+        return self.driver.extract(evt)
 
     # ── ROOT output ─────────────────────────────────────────────
 

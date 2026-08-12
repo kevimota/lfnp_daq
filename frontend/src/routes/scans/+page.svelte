@@ -63,6 +63,7 @@
     digitizer_id: null as number | null,
     trigger_mode: 'random' as 'random' | 'external',
     trigger_frequency_hz: 1,
+    sampling_frequency_hz: null as number | null,
     number_of_triggers: 100,
     record_length: 2048,
     post_trigger_size: 1024,
@@ -115,17 +116,25 @@
     } catch {}
   }
 
+  function channelCountForBoard(board_model: number): number {
+    if (board_model === 18) return 16; // DT5742: 2 groups x 8 channels
+    if (board_model === 27) return 8; // DT5743: 4 groups x 2 channels
+    return 8;
+  }
+
   function defaultChannels(): DigitizerChannel[] {
-    return [0, 1, 2, 3].map(i => ({ channel: i, enabled: true }));
+    const dm = digitizers.find(d => d.id === newScan.digitizer_id)?.board_model ?? 0;
+    const n = channelCountForBoard(dm);
+    return Array.from({ length: n }, (_, i) => ({ channel: i, enabled: true }));
   }
 
   function setScanType(t: 'hv_scan' | 'digitizer_scan') {
     newScan.type = t;
     if (t === 'digitizer_scan') {
-      if (newScan.channels.length === 0) newScan.channels = defaultChannels();
       if (newScan.digitizer_id == null && digitizers.length > 0) {
         newScan.digitizer_id = digitizers[0].id;
       }
+      if (newScan.channels.length === 0) newScan.channels = defaultChannels();
     } else {
       newScan.digitizer_id = null;
       newScan.channels = [];
@@ -183,6 +192,7 @@
       newScan.digitizer_id = config.digitizer_id ?? (config.type === 'digitizer_scan' && digitizers.length > 0 ? digitizers[0].id : null);
       newScan.trigger_mode = config.trigger_mode ?? 'random';
       newScan.trigger_frequency_hz = config.trigger_frequency_hz ?? 1;
+      newScan.sampling_frequency_hz = config.sampling_frequency_hz ?? null;
       newScan.number_of_triggers = config.number_of_triggers ?? 100;
       newScan.record_length = config.record_length ?? 2048;
       newScan.post_trigger_size = config.post_trigger_size ?? 1024;
@@ -207,6 +217,7 @@
               digitizer_id: newScan.digitizer_id,
               trigger_mode: newScan.trigger_mode,
               trigger_frequency_hz: newScan.trigger_frequency_hz,
+              sampling_frequency_hz: newScan.sampling_frequency_hz,
               number_of_triggers: newScan.number_of_triggers,
               record_length: newScan.record_length,
               post_trigger_size: newScan.post_trigger_size,
@@ -237,6 +248,7 @@
       newScan.digitizer_id = parsed.digitizer_id ?? newScan.digitizer_id;
       newScan.trigger_mode = parsed.trigger_mode ?? newScan.trigger_mode;
       newScan.trigger_frequency_hz = parsed.trigger_frequency_hz ?? newScan.trigger_frequency_hz;
+      if (parsed.sampling_frequency_hz != null) newScan.sampling_frequency_hz = parsed.sampling_frequency_hz;
       newScan.number_of_triggers = parsed.number_of_triggers ?? newScan.number_of_triggers;
       newScan.record_length = parsed.record_length ?? newScan.record_length;
       newScan.post_trigger_size = parsed.post_trigger_size ?? newScan.post_trigger_size;
@@ -278,6 +290,7 @@
       digitizer_id: null as number | null,
       trigger_mode: 'random' as 'random' | 'external',
       trigger_frequency_hz: 1,
+      sampling_frequency_hz: null as number | null,
       number_of_triggers: 100,
       record_length: 2048,
       post_trigger_size: 1024,
@@ -517,6 +530,11 @@
                 <span class="label-text">Record Length</span>
                 <input type="number" class="input input-bordered"
                   bind:value={newScan.record_length} />
+              </label>
+              <label class="form-control">
+                <span class="label-text">Sampling Frequency (Hz, optional)</span>
+                <input type="number" class="input input-bordered" step="100000000"
+                  bind:value={newScan.sampling_frequency_hz} placeholder="e.g. 5000000000 (hardware default if empty)" />
               </label>
               <label class="form-control">
                 <span class="label-text">Post Trigger Size</span>
