@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import time
 from datetime import datetime, UTC
 
 from ..core.fsm import DAQFSM, DAQState
 from ..hardware import DigitizerScanner
 from .current_scan import CurrentScanner
+
+_LOG = logging.getLogger("daq.scan")
 
 
 class DigitizerScan(CurrentScanner):
@@ -87,6 +90,13 @@ class DigitizerScan(CurrentScanner):
             progress = await self.digitizer.step()
             done = target > 0 and progress["collected"] >= target
             if done:
+                _LOG.info(
+                    "run=%s point=%s: target reached (%s/%s triggers)",
+                    self.fsm.run_id,
+                    point_index,
+                    progress["collected"],
+                    target,
+                )
                 break
             await asyncio.sleep(0.02)
 

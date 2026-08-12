@@ -1,11 +1,13 @@
 import asyncio
 import concurrent.futures
+import logging
 import os
 import time
 from datetime import datetime, UTC
 from typing import Callable, Optional
 
 import numpy as np
+import awkward as ak
 import uproot
 
 from caen_libs.caendigitizer import (
@@ -27,6 +29,11 @@ _CHANNELS_PER_X743_GROUP = 2  # MAX_X743_CHANNELS_X_GROUP
 _DRS4_FAMILIES = {BoardFamilyCode.XX742, BoardFamilyCode.XX743}
 
 _DEFAULT_DRS4_FREQUENCY = DRS4Frequency.F_5GHz
+
+_LOG = logging.getLogger("daq.digitizer")
+
+_STALL_LOG_SECONDS = 30.0
+_MILESTONE_STEPS = 20  # log collected/target progress ~MILESTONE_STEPS times per point
 
 
 class DigitizerScanner:
@@ -72,6 +79,12 @@ class DigitizerScanner:
         self._sw_interval: Optional[float] = None
         self._last_sw = 0.0
         self._collected = 0
+        self._sw_triggers_sent = 0
+        self._skipped_events = 0
+        self._point_started = 0.0
+        self._last_collect_at = 0.0
+        self._stall_warned = False
+        self._last_milestone = -1
         self._events: list[int] = []
         self._timestamps: list[float] = []
         self._time_tags: list[int] = []
@@ -103,10 +116,19 @@ class DigitizerScanner:
     async def open(self):
         if self.device is not None:
             return self
+        t0 = time.monotonic()
         dev, info = await self._run(self._do_open)
         self.device = dev
         self.info = info
         self.is_drs4 = self.info.family_code in _DRS4_FAMILIES
+        _LOG.info(
+            "digitizer opened in %.2fs: %s serial=%s channels=%s drs4=%s",
+            time.monotonic() - t0,
+            getattr(info, "model_name", "?"),
+            getattr(info, "serial_number", "?"),
+            getattr(info, "channels", "?"),
+            self.is_drs4,
+        )
         return self
 
     def _do_close(self):
@@ -119,6 +141,7 @@ class DigitizerScanner:
     async def close(self):
         if self.device is not None:
             await self._run(self._do_close)
+            _LOG.info("digitizer closed (collected this session: %s)", self._collected)
         self._executor.shutdown(wait=False)
 
     def _do_configure(self, cfg: dict):
@@ -166,6 +189,15 @@ class DigitizerScanner:
 
         dev.malloc_readout_buffer()
         dev.allocate_event()
+        _LOG.info(
+            "digitizer configured: mode=%s enabled_channels=%s record_length=%s "
+            "input_range_vpp=%s calibrated=%s",
+            self._mode,
+            self.enabled_channels,
+            self.record_length,
+            self.input_range_vpp,
+            self.calibrated,
+        )
         return self.enabled_channels
 
     async def configure(self, cfg: dict):
@@ -214,45 +246,105 @@ class DigitizerScanner:
         self._charges = []
         self._waveforms = []
         self._collected = 0
+        self._sw_triggers_sent = 0
+        self._skipped_events = 0
+        self._point_started = time.monotonic()
+        self._last_collect_at = self._point_started
+        self._stall_warned = False
+        self._last_milestone = -1
 
         dev = self.device
         dev.clear_data()
         dev.sw_start_acquisition()
         self._last_sw = time.monotonic()
 
+        _LOG.info(
+            "run=%s point=%s: acquisition started mode=%s target=%s freq=%s sw_interval=%s",
+            run_id,
+            point_index,
+            self._mode,
+            self._target,
+            freq,
+            self._sw_interval,
+        )
+
     async def begin_point(self, run_dir: str, point_index: int, cfg: dict, hv_channels: list[dict], run_id: int):
         return await self._run(self._do_begin_point, run_dir, point_index, cfg, hv_channels, run_id)
 
     def _do_step(self) -> dict:
         dev = self.device
-        if self._sw_interval is not None:
-            now = time.monotonic()
-            if now - self._last_sw >= self._sw_interval:
-                dev.send_sw_trigger()
-                self._last_sw = now
+        now = time.monotonic()
+        if self._sw_interval is not None and now - self._last_sw >= self._sw_interval:
+            dev.send_sw_trigger()
+            self._last_sw = now
+            self._sw_triggers_sent += 1
 
+        t0 = time.monotonic()
         dev.read_data(ReadMode.POLLING_MBLT)
         n_events = dev.get_num_events()
+        for i in range(n_events or 0):
+            info, buf = dev.get_event_info(i)
+            evt = dev.decode_event(buf)
+            extracted = self._extract_event(evt)
+            if extracted is None:
+                self._skipped_events += 1
+                continue
+            waveforms, scalars = extracted
+            self._events.append(self._collected)
+            self._timestamps.append(datetime.now(UTC).timestamp())
+            self._time_tags.append(info.trigger_time_tag)
+            self._start_cells.append(scalars["start_cell"])
+            self._tdcs.append(scalars["tdc"])
+            self._peaks.append(scalars["peak"])
+            self._baselines.append(scalars["baseline"])
+            self._charges.append(scalars["charge"])
+            self._waveforms.append(waveforms)
+            self._collected += 1
+            if self._target > 0 and self._collected >= self._target:
+                break
+
         if n_events:
-            for i in range(n_events):
-                info, buf = dev.get_event_info(i)
-                evt = dev.decode_event(buf)
-                extracted = self._extract_event(evt)
-                if extracted is None:
-                    continue
-                waveforms, scalars = extracted
-                self._events.append(self._collected)
-                self._timestamps.append(datetime.now(UTC).timestamp())
-                self._time_tags.append(info.trigger_time_tag)
-                self._start_cells.append(scalars["start_cell"])
-                self._tdcs.append(scalars["tdc"])
-                self._peaks.append(scalars["peak"])
-                self._baselines.append(scalars["baseline"])
-                self._charges.append(scalars["charge"])
-                self._waveforms.append(waveforms)
-                self._collected += 1
-                if self._collected >= self._target:
-                    break
+            self._last_collect_at = time.monotonic()
+            _LOG.debug(
+                "run=%s point=%s: read_data returned %s events in %.3fs -> collected=%s/%s",
+                self._run_id,
+                self._point_index,
+                n_events,
+                time.monotonic() - t0,
+                self._collected,
+                self._target,
+            )
+
+        if self._target > 0:
+            progress = self._collected / self._target
+            milestone = int(progress * (_MILESTONE_STEPS - 1))
+            if milestone != self._last_milestone:
+                self._last_milestone = milestone
+                _LOG.info(
+                    "run=%s point=%s: progress %.0f%% (%s/%s) triggers sent=%s skipped=%s elapsed=%.1fs",
+                    self._run_id,
+                    self._point_index,
+                    progress * 100,
+                    self._collected,
+                    self._target,
+                    self._sw_triggers_sent,
+                    self._skipped_events,
+                    time.monotonic() - self._point_started,
+                )
+
+        if not self._stall_warned and now - self._last_collect_at > _STALL_LOG_SECONDS:
+            self._stall_warned = True
+            _LOG.warning(
+                "run=%s point=%s: no new events collected for %.0fs (collected=%s/%s "
+                "triggers sent=%s mode=%s) - scan may never finish",
+                self._run_id,
+                self._point_index,
+                now - self._last_collect_at,
+                self._collected,
+                self._target,
+                self._sw_triggers_sent,
+                self._mode,
+            )
 
         return {"collected": self._collected, "target": self._target}
 
@@ -269,6 +361,16 @@ class DigitizerScanner:
 
         path = os.path.join(self._run_dir, f"digitizer_point_{self._point_index}.root")
         self._write_root(path)
+        _LOG.info(
+            "run=%s point=%s: acquisition ended collected=%s/%s (skipped=%s, triggers sent=%s) -> %s",
+            self._run_id,
+            self._point_index,
+            self._collected,
+            self._target,
+            self._skipped_events,
+            self._sw_triggers_sent,
+            path,
+        )
         return {"n_events": self._collected, "path": path}
 
     async def end_point(self) -> dict:
@@ -352,31 +454,33 @@ class DigitizerScanner:
                     arr[e, : w.shape[0]] = w[:rec_len]
             data[f"ch{ch}"] = arr
 
-        meta = {
-            "run_id": np.array([self._run_id], dtype=np.int32),
-            "point_index": np.array([self._point_index], dtype=np.int32),
-            "digitizer_model": [self.info.model_name],
-            "board_model": np.array([int(self.info.model)], dtype=np.uint32),
-            "serial_number": np.array([self.info.serial_number], dtype=np.uint32),
-            "family_code": np.array([int(self.info.family_code)], dtype=np.uint32),
-            "firmware_code": np.array([int(self.info.firmware_code)], dtype=np.uint32),
-            "adc_n_bits": np.array([self.info.adc_n_bits], dtype=np.uint16),
-            "n_channels": np.array([self.info.channels], dtype=np.uint16),
-            "channels_used": np.asarray(self.enabled_channels, dtype=np.uint16),
-            "record_length": np.array([rec_len], dtype=np.uint32),
-            "trigger_mode": [self._mode],
-            "number_of_triggers": np.array([self._target], dtype=np.uint32),
-            "input_range_vpp": np.array([self.input_range_vpp or 0.0], dtype=np.float64),
-            "calibrated": np.array([1 if self.calibrated else 0], dtype=np.int32),
-            "connection_type": np.array([int(self.connection_type)], dtype=np.int32),
-            "link_used": [str(self.arg)],
+        meta_fields = {
+            "run_id": int(self._run_id),
+            "point_index": int(self._point_index),
+            "digitizer_model": str(self.info.model_name),
+            "board_model": int(self.info.model),
+            "serial_number": int(self.info.serial_number),
+            "family_code": int(self.info.family_code),
+            "firmware_code": int(self.info.firmware_code),
+            "adc_n_bits": int(self.info.adc_n_bits),
+            "n_channels": int(self.info.channels),
+            "channels_used": [int(c) for c in self.enabled_channels],
+            "record_length": int(rec_len),
+            "trigger_mode": self._mode,
+            "number_of_triggers": int(self._target),
+            "input_range_vpp": float(self.input_range_vpp or 0.0),
+            "calibrated": 1 if self.calibrated else 0,
+            "connection_type": int(self.connection_type),
+            "link_used": str(self.arg),
         }
         if self._hv_channels:
-            meta["hv_slot"] = np.array([c["slot"] for c in self._hv_channels], dtype=np.int32)
-            meta["hv_channel"] = np.array([c["channel"] for c in self._hv_channels], dtype=np.int32)
-            meta["hv_voltage"] = np.array([c["voltage"] for c in self._hv_channels], dtype=np.float32)
+            meta_fields["hv_slot"] = [int(c["slot"]) for c in self._hv_channels]
+            meta_fields["hv_channel"] = [int(c["channel"]) for c in self._hv_channels]
+            meta_fields["hv_voltage"] = [float(c["voltage"]) for c in self._hv_channels]
         if self.drs4_time:
-            meta["drs4_time"] = np.asarray(self.drs4_time, dtype=np.float32)
+            meta_fields["drs4_time"] = [float(t) for t in self.drs4_time]
+
+        meta = ak.Array([meta_fields])
 
         with uproot.recreate(path) as f:
             f["digitizer"] = data

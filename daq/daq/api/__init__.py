@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, UTC
 
 from fastapi import APIRouter
@@ -8,6 +9,8 @@ from ..core.db import get_session, DAQRuns
 from ..core.fsm import DAQFSM
 from ..core.websocket import DataBroadcaster
 from ..scans import CurrentScanner
+
+_LOG = logging.getLogger("daq.api")
 
 
 class ScanContext:
@@ -44,6 +47,8 @@ async def _background_scan(config: dict, run_id: int, ps_row) -> None:
     if ctx is None:
         return
 
+    _LOG.info("run=%s: background scan started (type=%s)", run_id, config.get("type"))
+
     try:
         result = await ctx.scanner.run_current_scan(config, run_id)
         with get_session() as session:
@@ -60,6 +65,12 @@ async def _background_scan(config: dict, run_id: int, ps_row) -> None:
                     run.data_path = result["data_path"]
                 session.add(run)
                 session.commit()
+        _LOG.info(
+            "run=%s: background scan done success=%s error=%s",
+            run_id,
+            result.get("success"),
+            result.get("error"),
+        )
     except Exception as e:
         fsm = ctx.fsm
         fsm.fail(str(e))
@@ -70,6 +81,7 @@ async def _background_scan(config: dict, run_id: int, ps_row) -> None:
                 run.stopped_at = datetime.now(UTC)
                 session.add(run)
                 session.commit()
+        _LOG.exception("run=%s: background scan failed: %s", run_id, e)
     finally:
         scan_manager.pop(run_id, None)
 
