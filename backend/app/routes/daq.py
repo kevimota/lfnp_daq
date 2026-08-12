@@ -78,7 +78,6 @@ def update_configuration(config_id: int, req: RunCreateRequest, session: Session
     config.record_length = req.record_length
     config.post_trigger_size = req.post_trigger_size
     config.input_range_vpp = req.input_range_vpp
-    config.acquisition_timeout_s = req.acquisition_timeout_s
     config.channels = req.channels
     session.add(config)
     session.commit()
@@ -114,19 +113,30 @@ _ACTIVE_RUN_STATUSES = {"running"}
 async def _proxy_to_daq(run_id: int, action: str, method: str = "POST") -> dict:
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/{action}"
-    async with httpx.AsyncClient(timeout=10, verify=False) as client:
-        if method == "GET":
-            resp = await client.get(url)
-        else:
-            resp = await client.post(url)
-        if resp.status_code != 200:
-            detail = "DAQ error"
-            try:
-                detail = resp.json().get("detail", detail)
-            except Exception:
-                pass
-            raise HTTPException(status_code=resp.status_code, detail=detail)
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=60, verify=False) as client:
+            if method == "GET":
+                resp = await client.get(url)
+            else:
+                resp = await client.post(url)
+    except httpx.ReadTimeout:
+        raise HTTPException(
+            status_code=503,
+            detail=f"DAQ service did not respond for run {run_id} within 60s (it may be busy recording)",
+        )
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=502,
+            detail="DAQ service is unreachable",
+        )
+    if resp.status_code != 200:
+        detail = "DAQ error"
+        try:
+            detail = resp.json().get("detail", detail)
+        except Exception:
+            pass
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+    return resp.json()
 
 
 def _validate_scan_params(req: RunCreateRequest, session) -> None:
@@ -198,7 +208,6 @@ def create_run(req: RunCreateRequest, session: SessionDep):
         record_length=req.record_length,
         post_trigger_size=req.post_trigger_size,
         input_range_vpp=req.input_range_vpp,
-        acquisition_timeout_s=req.acquisition_timeout_s,
         channels=req.channels,
     )
     session.add(config)

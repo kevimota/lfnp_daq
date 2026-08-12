@@ -27,12 +27,12 @@ class DigitizerScan(CurrentScanner):
         self.digitizer = digitizer
 
     async def run_current_scan(self, config: dict, run_id: int) -> dict:
-        self.digitizer.open()
-        self.digitizer.configure(config)
+        await self.digitizer.open()
+        await self.digitizer.configure(config)
         try:
             return await super().run_current_scan(config, run_id)
         finally:
-            self.digitizer.close()
+            await self.digitizer.close()
 
     async def _record_point(self, run_dir: str, point_index: int, point_config: list, config: dict):
         sample_interval = config.get("sample_interval_seconds", 1)
@@ -45,7 +45,7 @@ class DigitizerScan(CurrentScanner):
 
         self.data_writer.start_point_data(run_dir, point_index)
         self.fsm.to_recording()
-        self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
+        await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
 
         samples_recorded = 0
         last_sample_time = None
@@ -63,7 +63,7 @@ class DigitizerScan(CurrentScanner):
                 self.fsm.to_recording()
                 samples_recorded = 0
                 last_sample_time = None
-                self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
+                await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
 
             now = time.monotonic()
             if last_sample_time is None or now - last_sample_time >= sample_interval:
@@ -85,7 +85,7 @@ class DigitizerScan(CurrentScanner):
                 last_sample_time = now
 
             progress = await self.digitizer.step()
-            done = target > 0 and (progress["collected"] >= target or progress["timed_out"])
+            done = target > 0 and progress["collected"] >= target
             if done:
                 break
             await asyncio.sleep(0.02)

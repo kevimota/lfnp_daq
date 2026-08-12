@@ -1,5 +1,7 @@
 import asyncio
+import concurrent.futures
 import os
+import time
 from datetime import datetime, UTC
 from typing import Callable, Optional
 
@@ -25,7 +27,6 @@ _CHANNELS_PER_X743_GROUP = 2  # MAX_X743_CHANNELS_X_GROUP
 _DRS4_FAMILIES = {BoardFamilyCode.XX742, BoardFamilyCode.XX743}
 
 _DEFAULT_DRS4_FREQUENCY = DRS4Frequency.F_5GHz
-_DEFAULT_ACQUISITION_TIMEOUT_S = 3600.0
 
 
 class DigitizerScanner:
@@ -33,7 +34,7 @@ class DigitizerScanner:
 
     Random trigger uses an internal periodic software trigger (one SendSWtrigger
     every 1/frequency seconds). External trigger reads from the trigger input;
-    acquisition ends after ``number_of_triggers`` waveforms or a safety timeout.
+    acquisition ends after ``number_of_triggers`` waveforms.
 
     Waveforms are voltage-calibrated where the hardware supports it (DRS4 boards
     with firmware correction; otherwise a linear counts->volts conversion using
@@ -56,6 +57,11 @@ class DigitizerScanner:
         self.calibrated = False
         self.drs4_time: Optional[list[float]] = None
 
+        # CAEN calls are synchronous and can block for a long time (optical/USB
+        # I/O, decode, ROOT writes). Run them on a dedicated single worker thread
+        # so the asyncio loop stays responsive (status/pause/resume always work).
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
         # Per-point acquisition state
         self._run_dir = ""
         self._point_index = 0
@@ -64,8 +70,6 @@ class DigitizerScanner:
         self._target = 0
         self._mode = "random"
         self._sw_interval: Optional[float] = None
-        self._timeout_s = _DEFAULT_ACQUISITION_TIMEOUT_S
-        self._started_at = 0.0
         self._last_sw = 0.0
         self._collected = 0
         self._events: list[int] = []
@@ -84,27 +88,40 @@ class DigitizerScanner:
 
     # ── lifecycle ───────────────────────────────────────────────
 
-    def open(self):
-        if self.device is not None:
-            return self
-        self.device = open_device(
+    def _run(self, fn, *args):
+        return asyncio.get_running_loop().run_in_executor(self._executor, fn, *args)
+
+    def _do_open(self):
+        dev = open_device(
             self.connection_type,
             self.arg,
             self.conet_node,
             self.vme_base_address,
         )
-        self.info = self.device.get_info()
+        return dev, dev.get_info()
+
+    async def open(self):
+        if self.device is not None:
+            return self
+        dev, info = await self._run(self._do_open)
+        self.device = dev
+        self.info = info
         self.is_drs4 = self.info.family_code in _DRS4_FAMILIES
         return self
 
-    def close(self):
+    def _do_close(self):
         if self.device is not None:
             try:
                 self.device.close()
             finally:
                 self.device = None
 
-    def configure(self, cfg: dict):
+    async def close(self):
+        if self.device is not None:
+            await self._run(self._do_close)
+        self._executor.shutdown(wait=False)
+
+    def _do_configure(self, cfg: dict):
         if self.device is None:
             raise RuntimeError("Digitizer not open")
 
@@ -151,6 +168,9 @@ class DigitizerScanner:
         dev.allocate_event()
         return self.enabled_channels
 
+    async def configure(self, cfg: dict):
+        return await self._run(self._do_configure, cfg)
+
     def _configure_drs4(self):
         dev = self.device
         try:
@@ -174,14 +194,13 @@ class DigitizerScanner:
 
     # ── per-point acquisition ───────────────────────────────────
 
-    def begin_point(self, run_dir: str, point_index: int, cfg: dict, hv_channels: list[dict], run_id: int):
+    def _do_begin_point(self, run_dir: str, point_index: int, cfg: dict, hv_channels: list[dict], run_id: int):
         self._run_dir = run_dir
         self._point_index = point_index
         self._run_id = run_id
         self._hv_channels = hv_channels
         self._target = int(cfg.get("number_of_triggers", 0))
         self._mode = cfg.get("trigger_mode", "random")
-        self._timeout_s = float(cfg.get("acquisition_timeout_s", _DEFAULT_ACQUISITION_TIMEOUT_S))
         freq = float(cfg.get("trigger_frequency_hz", 1.0))
         self._sw_interval = (1.0 / freq) if (self._mode == "random" and freq > 0) else None
 
@@ -199,15 +218,15 @@ class DigitizerScanner:
         dev = self.device
         dev.clear_data()
         dev.sw_start_acquisition()
-        now = asyncio.get_event_loop().time()
-        self._started_at = now
-        self._last_sw = now
+        self._last_sw = time.monotonic()
 
-    async def step(self) -> dict:
-        """One readout iteration. Returns progress {'collected', 'target', 'timed_out'}."""
+    async def begin_point(self, run_dir: str, point_index: int, cfg: dict, hv_channels: list[dict], run_id: int):
+        return await self._run(self._do_begin_point, run_dir, point_index, cfg, hv_channels, run_id)
+
+    def _do_step(self) -> dict:
         dev = self.device
         if self._sw_interval is not None:
-            now = asyncio.get_event_loop().time()
+            now = time.monotonic()
             if now - self._last_sw >= self._sw_interval:
                 dev.send_sw_trigger()
                 self._last_sw = now
@@ -235,15 +254,13 @@ class DigitizerScanner:
                 if self._collected >= self._target:
                     break
 
-        timed_out = (
-            self._target > 0
-            and self._collected < self._target
-            and (asyncio.get_event_loop().time() - self._started_at) > self._timeout_s
-        )
-        return {"collected": self._collected, "target": self._target, "timed_out": timed_out}
+        return {"collected": self._collected, "target": self._target}
 
-    async def end_point(self) -> dict:
-        """Stop acquisition and write the per-point ROOT file."""
+    async def step(self) -> dict:
+        """One readout iteration (runs on a worker thread)."""
+        return await self._run(self._do_step)
+
+    def _do_end_point(self) -> dict:
         dev = self.device
         try:
             dev.sw_stop_acquisition()
@@ -253,6 +270,10 @@ class DigitizerScanner:
         path = os.path.join(self._run_dir, f"digitizer_point_{self._point_index}.root")
         self._write_root(path)
         return {"n_events": self._collected, "path": path}
+
+    async def end_point(self) -> dict:
+        """Stop acquisition and write the per-point ROOT file (on a worker thread)."""
+        return await self._run(self._do_end_point)
 
     # ── event handling ──────────────────────────────────────────
 

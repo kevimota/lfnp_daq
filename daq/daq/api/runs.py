@@ -142,7 +142,6 @@ async def start_scan(run_id: int):
             config["record_length"] = config_row.record_length
             config["post_trigger_size"] = config_row.post_trigger_size
             config["input_range_vpp"] = config_row.input_range_vpp
-            config["acquisition_timeout_s"] = config_row.acquisition_timeout_s
             config["channels"] = config_row.channels or []
 
     system_type = SystemType(ps_row.system_type)

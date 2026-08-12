@@ -31,7 +31,6 @@ def init_db(session: Session) -> None:
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS record_length INTEGER",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS post_trigger_size INTEGER",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS input_range_vpp DOUBLE PRECISION",
-        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS acquisition_timeout_s DOUBLE PRECISION",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS channels JSONB",
         "ALTER TABLE daq_configuration DROP COLUMN IF EXISTS digitizer_config",
     ):
