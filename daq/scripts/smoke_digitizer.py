@@ -19,6 +19,11 @@ Run inside the ``daq`` container (native CAEN libraries are required):
         --target 100 --sampling-frequency-hz 1600000000 --record-length 512
 
 Exit code 0 on success + a filled ROOT file; 1 on any failure.
+
+On-board DRS4 correction is DISABLED by default: on the DT5742 it corrupts
+the heap right after ``enable_drs4_correction`` (``malloc(): corrupted top
+size``), so raw acquisition is used. Pass ``--correction`` to opt into the
+(on-board) corrected path for comparison.
 """
 import argparse
 import asyncio
@@ -71,6 +76,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="comma-separated enabled channels, e.g. '0,1'. "
                         "Default: all channels.")
     p.add_argument("--input-range-vpp", type=float, default=None)
+    p.add_argument("--correction", action="store_true",
+                   help="Enable on-board DRS4 correction (DT5742 only). "
+                        "Off by default: on this unit it corrupts the heap "
+                        "('malloc(): corrupted top size' after "
+                        "enable_drs4_correction).")
     p.add_argument("--output", default=None,
                    help="output directory (default: a temp dir under /tmp)")
     p.add_argument("--timeout", type=float, default=None,
@@ -137,6 +147,8 @@ async def main(argv: list[str] | None = None) -> int:
         "channels": _channels(args.channels),
         "input_range_vpp": args.input_range_vpp,
     }
+    if args.correction:
+        cfg["correction"] = True
     if args.sampling_frequency_hz is not None:
         cfg["sampling_frequency_hz"] = args.sampling_frequency_hz
     if args.record_length is not None:

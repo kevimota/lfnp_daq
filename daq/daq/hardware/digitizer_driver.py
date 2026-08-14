@@ -79,6 +79,8 @@ class DigitizerDriver(ABC):
     supported_frequencies_hz: list[int] = []
     #: default post-trigger size in percent
     post_trigger_default_percent = 50
+    #: on-board DRS4 correction (X742 only; off by default, see below)
+    correction_enabled = False
 
     def __init__(self, info):
         self.info = info
@@ -199,6 +201,7 @@ class DigitizerDriver(ABC):
         enable mask, post-trigger size, sampling frequency/calibration and any
         optional trigger/offset settings."""
         self.validate_config(cfg)
+        self.correction_enabled = bool(cfg.get("correction", False))
         mask = self._channel_mask(cfg)
         self.set_enable_mask(dev, mask)
         self.configure_post_trigger(dev, cfg)
@@ -252,11 +255,29 @@ class X742Driver(DigitizerDriver):
     def configure_frequency(self, dev, cfg: dict) -> None:
         freq = _DRS4_FREQUENCIES_BY_HZ[self._resolve_frequency_hz(cfg)]
         self._caen_call(dev.set_drs4_sampling_frequency, freq)
-        # Correction data is required for physics-quality waveforms on DRS4
-        # boards: do not skip it.
+        if not self.correction_enabled:
+            # On-board DRS4 correction (load/enable/get_correction_tables) is
+            # DISABLED by default: it corrupts the heap on this DT5742
+            # ("malloc(): corrupted top size" right after enable_drs4_correction,
+            # detected at the next allocation). CAEN ships the X742 correction
+            # as OFFLINE routines (samples/x742_DataCorrection) for exactly this
+            # reason. Decoding raw is always safe; X742Events decode to float
+            # either way, so extraction is unchanged.
+            self.drs4_time = None
+            self.calibrated = False
+            _LOG.info(
+                "DT5742: on-board DRS4 correction DISABLED (raw acquisition; "
+                "set 'correction': true to enable, but it may corrupt the heap)"
+            )
+            return
         self._caen_call(dev.load_drs4_correction_data, freq)
         self._caen_call(dev.enable_drs4_correction)
         try:
+            _LOG.debug(
+                "%s: CAEN call get_correction_tables%r",
+                self.model_name,
+                (freq,),
+            )
             self.drs4_time = list(dev.get_correction_tables(freq).time)
         except Error:
             self.drs4_time = None
