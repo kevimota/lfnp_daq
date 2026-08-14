@@ -19,6 +19,7 @@ DRS4 and SAM calls are never mixed: each driver only ever calls the API family
 of its own board. A ``caen_libs.error.Error`` raised by a board-specific call
 is re-raised with a clear message (it usually means a board-detection bug).
 """
+import ctypes as ct
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -35,8 +36,13 @@ from caen_libs.caendigitizer import (
     TriggerMode,
     X742Event,
     X743Event,
+    lib,
 )
-from caen_libs._caendigitizertypes import BoardModel
+from caen_libs._caendigitizertypes import (
+    MAX_X742_GROUP_SIZE,
+    BoardModel,
+    DRS4CorrectionRaw,
+)
 
 _LOG = logging.getLogger("daq.digitizer")
 
@@ -55,6 +61,99 @@ _SAM_FREQUENCIES_BY_HZ = {
     800_000_000: SAMFrequency.F_800MHz,
     400_000_000: SAMFrequency.F_400MHz,
 }
+
+
+def _read_drs4_correction_tables(dev, freq: DRS4Frequency) -> list[dict]:
+    """Read the per-group DRS4 correction tables from the digitizer flash.
+
+    ``CAEN_DGTZ_GetCorrectionTables`` fills one ``CAEN_DGTZ_DRS4Correction_t``
+    per group (``MAX_X742_GROUP_SIZE`` tables). The caen_libs wrapper allocates
+    a *single* table and reads into it, overrunning the buffer and corrupting
+    the heap (the original ``malloc(): corrupted top size``). Calling the raw
+    binding with a correctly-sized buffer is safe and needs none of the
+    crashing on-board ``load/enable`` calls.
+
+    Returns one dict per group with numpy ``cell[9][1024]`` (int16),
+    ``nsample[9][1024]`` (int8), ``time[1024]`` (float32, ps) and ``valid``
+    (True when the group's flash calibration is populated).
+    """
+    buf = (DRS4CorrectionRaw * MAX_X742_GROUP_SIZE)()
+    lib.get_correction_tables(dev.handle, int(freq), ct.cast(buf, ct.c_void_p))
+    tables: list[dict] = []
+    for g in range(MAX_X742_GROUP_SIZE):
+        raw = buf[g]
+        time = np.asarray(raw.time, dtype=np.float32)
+        tables.append(
+            {
+                "cell": np.asarray(raw.cell, dtype=np.int16),
+                "nsample": np.asarray(raw.nsample, dtype=np.int8),
+                "time": time,
+                "valid": bool(np.any(time)),
+            }
+        )
+    return tables
+
+
+def _drs4_tsamp_ps(hz: int) -> float:
+    """Nominal sampling interval in the correction-table time scale (ps).
+
+    Mirrors the CAEN sample formula ``(1.0 / freq_GHz) * 1000.0`` but fixes
+    the sample's bug of mapping every unlisted frequency (incl. 750 MHz) to
+    the 5 GHz default."""
+    return (1.0 / (hz / 1e9)) * 1000.0
+
+
+def _peak_correction(waveforms: list[np.ndarray]) -> list[np.ndarray]:
+    """Port of CAEN's x742_DataCorrection ``PeakCorrection``.
+
+    Removes the occasional glitch that appears on *all* DRS4 channels at the
+    same sample (the DRS4 readout switching artefact), by replacing the
+    offending samples with neighbouring values."""
+    n = len(waveforms)
+    if n == 0:
+        return waveforms
+    size = len(waveforms[0])
+    for w in waveforms:
+        w[0] = w[1]
+    for i in range(1, size):
+        offset = 0
+        for w in waveforms:
+            if i == 1:
+                spike = (w[2] - w[1]) > 30 or ((w[3] - w[1]) > 30 and (w[3] - w[2]) > 30)
+            elif i == size - 1:
+                spike = (w[size - 2] - w[size - 1]) > 30
+            else:
+                if (w[i - 1] - w[i]) <= 30:
+                    spike = False
+                elif (w[i + 1] - w[i]) > 30:
+                    spike = True
+                else:
+                    spike = (i == size - 2) or ((w[i + 2] - w[i]) > 30)
+            if spike:
+                offset += 1
+        if offset != n:
+            continue
+        for w in waveforms:
+            if i == 1:
+                if (w[2] - w[1]) > 30:
+                    w[0] = w[2]
+                    w[1] = w[2]
+                else:
+                    w[0] = w[3]
+                    w[1] = w[3]
+                    w[2] = w[3]
+            elif i == size - 1:
+                w[size - 1] = w[size - 2]
+            elif (w[i + 1] - w[i]) > 30:
+                w[i] = (w[i + 1] + w[i - 1]) / 2.0
+            elif i == size - 2:
+                w[size - 2] = w[size - 3]
+                w[size - 1] = w[size - 3]
+            else:
+                v = (w[i + 2] + w[i - 1]) / 2.0
+                w[i] = v
+                w[i + 1] = v
+    return waveforms
 
 
 class DigitizerDriver(ABC):
@@ -79,8 +178,6 @@ class DigitizerDriver(ABC):
     supported_frequencies_hz: list[int] = []
     #: default post-trigger size in percent
     post_trigger_default_percent = 50
-    #: on-board DRS4 correction (X742 only; off by default, see below)
-    correction_enabled = False
 
     def __init__(self, info):
         self.info = info
@@ -88,6 +185,8 @@ class DigitizerDriver(ABC):
         self.input_range_vpp: Optional[float] = None
         self.calibrated = False
         self.drs4_time: Optional[list[float]] = None
+        self.correction_tables: list[dict] = []
+        self._resolved_frequency_hz = self.default_frequency_hz or 0
 
     @property
     def model(self) -> BoardModel:
@@ -201,7 +300,6 @@ class DigitizerDriver(ABC):
         enable mask, post-trigger size, sampling frequency/calibration and any
         optional trigger/offset settings."""
         self.validate_config(cfg)
-        self.correction_enabled = bool(cfg.get("correction", False))
         mask = self._channel_mask(cfg)
         self.set_enable_mask(dev, mask)
         self.configure_post_trigger(dev, cfg)
@@ -232,13 +330,21 @@ class DigitizerDriver(ABC):
 class X742Driver(DigitizerDriver):
     """DT5742 (X742 family, DRS4): groups of 8 analog channels plus a TR0
     reference channel (data_channel index 8) that is excluded from the enabled
-    channel set."""
+    channel set.
+
+    This unit has 2 populated groups (16 channels), verified on hardware: the
+    group-enable mask rejects bits 0x4/0xF and the correction flash only holds
+    tables for groups 0-1."""
 
     drs4 = True
     channels_per_group = 8
     record_length_configurable = False
     default_frequency_hz = 5_000_000_000
     supported_frequencies_hz = list(_DRS4_FREQUENCIES_BY_HZ)
+
+    @property
+    def n_groups(self) -> int:
+        return 2
 
     def set_enable_mask(self, dev, mask: int) -> None:
         group_mask = 0
@@ -253,40 +359,69 @@ class X742Driver(DigitizerDriver):
         self._caen_call(dev.set_post_trigger_size, percent)
 
     def configure_frequency(self, dev, cfg: dict) -> None:
-        freq = _DRS4_FREQUENCIES_BY_HZ[self._resolve_frequency_hz(cfg)]
+        hz = self._resolve_frequency_hz(cfg)
+        freq = _DRS4_FREQUENCIES_BY_HZ[hz]
         self._caen_call(dev.set_drs4_sampling_frequency, freq)
-        if not self.correction_enabled:
-            # On-board DRS4 correction (load/enable/get_correction_tables) is
-            # DISABLED by default: it corrupts the heap on this DT5742
-            # ("malloc(): corrupted top size" right after enable_drs4_correction,
-            # detected at the next allocation). CAEN ships the X742 correction
-            # as OFFLINE routines (samples/x742_DataCorrection) for exactly this
-            # reason. Decoding raw is always safe; X742Events decode to float
-            # either way, so extraction is unchanged.
-            self.drs4_time = None
-            self.calibrated = False
-            _LOG.info(
-                "DT5742: on-board DRS4 correction DISABLED (raw acquisition; "
-                "set 'correction': true to enable, but it may corrupt the heap)"
-            )
-            return
-        self._caen_call(dev.load_drs4_correction_data, freq)
-        self._caen_call(dev.enable_drs4_correction)
+        self._resolved_frequency_hz = hz
+        # Read the per-group correction tables from flash and apply them OFFLINE
+        # in extract(). The on-board load/enable path is deliberately NOT used:
+        # it is what corrupted the heap on this unit ("malloc(): corrupted top
+        # size"). CAEN_DGTZ_GetCorrectionTables fills MAX_X742_GROUP_SIZE tables
+        # from flash, so we call the raw binding with a full-size buffer (the
+        # caen_libs wrapper allocates only one and overruns).
         try:
-            _LOG.debug(
-                "%s: CAEN call get_correction_tables%r",
-                self.model_name,
-                (freq,),
+            tables = _read_drs4_correction_tables(dev, freq)
+        except Error as e:
+            _LOG.warning("DT5742: could not read DRS4 correction tables (%s) - "
+                         "acquiring raw", e)
+            tables = []
+        self.correction_tables = tables
+        valid = [t for t in tables if t["valid"]]
+        self.calibrated = bool(valid)
+        if valid:
+            self.drs4_time = [i * _drs4_tsamp_ps(hz) for i in range(1024)]
+            _LOG.info(
+                "DT5742: offline DRS4 correction active for %d group(s) "
+                "(calibrated, Tsamp=%.3f ps)",
+                len(valid), _drs4_tsamp_ps(hz),
             )
-            self.drs4_time = list(dev.get_correction_tables(freq).time)
-        except Error:
+        else:
             self.drs4_time = None
-        self.calibrated = self.drs4_time is not None
-        if not self.calibrated:
-            _LOG.warning(
-                "DT5742: DRS4 correction tables unavailable after load — "
-                "waveforms will be recorded without correction"
-            )
+            _LOG.warning("DT5742: no valid DRS4 correction tables - acquiring raw")
+
+    def _apply_drs4_correction(
+        self,
+        waveforms: list[np.ndarray],
+        start_cell: int,
+        table: dict,
+    ) -> list[np.ndarray]:
+        """Apply the DRS4 corrections to one group's channels, in CAEN's
+        x742_DataCorrection order: cell offset, nsample offset, peak/glitch
+        removal, then linearize the non-uniform DRS4 time base onto a uniform
+        grid."""
+        cell = table["cell"]
+        nsample = table["nsample"]
+        time = table["time"]
+        if not waveforms:
+            return waveforms
+        size = min(len(w) for w in waveforms)
+        if size == 0:
+            return waveforms
+        idx = (start_cell + np.arange(size)) % 1024
+        for j, w in enumerate(waveforms):
+            w -= cell[j][idx]
+            w -= nsample[j][:size]
+        waveforms = _peak_correction(waveforms)
+        tsamp = _drs4_tsamp_ps(self._resolved_frequency_hz)
+        cells = (start_cell + np.arange(1024)) % 1024
+        deltas = time[cells[1:]] - time[cells[:-1]]
+        deltas = np.where(deltas > 0, deltas, deltas + tsamp * 1024.0)
+        time_axis = np.zeros(1024, dtype=np.float32)
+        time_axis[1:] = np.cumsum(deltas)
+        x = np.arange(1024) * tsamp
+        for j, w in enumerate(waveforms):
+            waveforms[j] = np.interp(x[:size], time_axis[:size], w[:size]).astype(np.float32)
+        return waveforms
 
     def configure_triggers(self, dev, cfg: dict) -> None:
         """Optional DRS4 fast-trigger / group DC-offset settings (applied only
@@ -316,13 +451,20 @@ class X742Driver(DigitizerDriver):
             if not found_scalars:
                 scalars["start_cell"] = int(group.start_index_cell)
                 found_scalars = True
-            for j in range(self.channels_per_group):
-                arr = group.data_channel[j]
-                if arr.size == 0:
-                    continue
+            start_cell = int(group.start_index_cell)
+            table = (
+                self.correction_tables[g_idx]
+                if g_idx < len(self.correction_tables)
+                else None
+            )
+            group_wf = [np.array(group.data_channel[j], dtype=np.float32)
+                        for j in range(self.channels_per_group)]
+            if table is not None and table["valid"]:
+                group_wf = self._apply_drs4_correction(group_wf, start_cell, table)
+            for j, w in enumerate(group_wf):
                 ch = g_idx * self.channels_per_group + j
-                if ch in self.enabled_channels:
-                    waveforms[self.enabled_channels.index(ch)] = np.asarray(arr, dtype=np.float32)
+                if w.size and ch in self.enabled_channels:
+                    waveforms[self.enabled_channels.index(ch)] = w
         if not any(w is not None for w in waveforms):
             return None
         return waveforms, scalars

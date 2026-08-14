@@ -4,8 +4,8 @@
 Exercises the full DigitizerScanner open -> configure -> acquire -> readout ->
 ROOT-write -> close path against the physical board, without the HV/DB/FSM
 stack. It is the quick regression check that the earlier
-``malloc(): corrupted top size`` crash (DT5742 on-board DRS4
-correction, see below) is gone, and that the per-board driver
+``malloc(): corrupted top size`` crash (the DT5742 on-board DRS4
+correction path, see below) is gone, and that the per-board driver
 (DT5742/DRS4 vs DT5743/SAMLONG) configures and reads out correctly.
 
 Run inside the ``daq`` container (native CAEN libraries are required):
@@ -20,10 +20,12 @@ Run inside the ``daq`` container (native CAEN libraries are required):
 
 Exit code 0 on success + a filled ROOT file; 1 on any failure.
 
-On-board DRS4 correction is DISABLED by default: on the DT5742 it corrupts
-the heap right after ``enable_drs4_correction`` (``malloc(): corrupted top
-size``), so raw acquisition is used. Pass ``--correction`` to opt into the
-(on-board) corrected path for comparison.
+DT5742 DRS4 correction is applied OFFLINE in software: the on-board
+``load/enable`` path corrupts the heap (``malloc(): corrupted top size``) and
+the caen_libs ``get_correction_tables`` wrapper overruns a single-table buffer,
+so the correction tables are read from flash with a full-size buffer and
+cell/nsample/glitch/time corrections are applied to every waveform (uniform
+time grid). The DT5743 SAM correction runs on-board as usual.
 """
 import argparse
 import asyncio
@@ -76,11 +78,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="comma-separated enabled channels, e.g. '0,1'. "
                         "Default: all channels.")
     p.add_argument("--input-range-vpp", type=float, default=None)
-    p.add_argument("--correction", action="store_true",
-                   help="Enable on-board DRS4 correction (DT5742 only). "
-                        "Off by default: on this unit it corrupts the heap "
-                        "('malloc(): corrupted top size' after "
-                        "enable_drs4_correction).")
     p.add_argument("--output", default=None,
                    help="output directory (default: a temp dir under /tmp)")
     p.add_argument("--timeout", type=float, default=None,
@@ -147,8 +144,6 @@ async def main(argv: list[str] | None = None) -> int:
         "channels": _channels(args.channels),
         "input_range_vpp": args.input_range_vpp,
     }
-    if args.correction:
-        cfg["correction"] = True
     if args.sampling_frequency_hz is not None:
         cfg["sampling_frequency_hz"] = args.sampling_frequency_hz
     if args.record_length is not None:
@@ -187,7 +182,7 @@ async def main(argv: list[str] | None = None) -> int:
         _LOG.info("ROOT output: %s (%.0f bytes)", path, os.path.getsize(path) if os.path.isfile(path) else 0)
         if ok:
             _LOG.info("SMOKE TEST PASSED (%s/%s events, no malloc(): corrupted top size - "
-                      "DT5742 DRS4 correction off; DT5743 SAM post-trigger per group)",
+                      "DT5742 offline DRS4 correction; DT5743 SAM per-group post-trigger)",
                       n, args.target)
         else:
             _LOG.error("SMOKE TEST FAILED: collected=%s target=%s file_ok=%s", n, args.target, os.path.isfile(path))
