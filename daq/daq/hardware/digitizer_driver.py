@@ -345,8 +345,13 @@ class X743Driver(DigitizerDriver):
 
     def configure_post_trigger(self, dev, cfg: dict) -> None:
         percent = max(0, min(100, int(cfg.get("post_trigger_size", self.post_trigger_default_percent))))
-        for ch in self.enabled_channels:
-            self._caen_call(dev.set_sam_post_trigger_size, ch, percent)
+        # SAM post-trigger is configured per SAM group (SamIndex 0..n_groups-1),
+        # not per channel: CAEN_DGTZ_SetSAMPostTriggerSize(handle, SamIndex,
+        # value). On the DT5743 (4 groups x 2 channels) selecting a per-channel
+        # index >= n_groups returns COMM_ERROR (verified on hardware), while the
+        # 8-bit channel enable mask does accept all 8 physical channels.
+        for g in range(self.n_groups):
+            self._caen_call(dev.set_sam_post_trigger_size, g, percent)
 
     def configure_frequency(self, dev, cfg: dict) -> None:
         freq = _SAM_FREQUENCIES_BY_HZ[self._resolve_frequency_hz(cfg)]

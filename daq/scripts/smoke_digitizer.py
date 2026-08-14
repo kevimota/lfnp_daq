@@ -4,9 +4,9 @@
 Exercises the full DigitizerScanner open -> configure -> acquire -> readout ->
 ROOT-write -> close path against the physical board, without the HV/DB/FSM
 stack. It is the quick regression check that the earlier
-``malloc(): corrupted top size`` crash (bogus post-trigger size -> bad buffer
-geometry) is gone, and that the per-board driver (DT5742/DRS4 vs
-DT5743/SAMLONG) configures and reads out correctly.
+``malloc(): corrupted top size`` crash (DT5742 on-board DRS4
+correction, see below) is gone, and that the per-board driver
+(DT5742/DRS4 vs DT5743/SAMLONG) configures and reads out correctly.
 
 Run inside the ``daq`` container (native CAEN libraries are required):
 
@@ -186,8 +186,9 @@ async def main(argv: list[str] | None = None) -> int:
         ok = n >= args.target and os.path.isfile(path) and os.path.getsize(path) > 0
         _LOG.info("ROOT output: %s (%.0f bytes)", path, os.path.getsize(path) if os.path.isfile(path) else 0)
         if ok:
-            _LOG.info("SMOKE TEST PASSED (no malloc(): corrupted top size - "
-                      "post-trigger was clamped to 0-100 percent)")
+            _LOG.info("SMOKE TEST PASSED (%s/%s events, no malloc(): corrupted top size - "
+                      "DT5742 DRS4 correction off; DT5743 SAM post-trigger per group)",
+                      n, args.target)
         else:
             _LOG.error("SMOKE TEST FAILED: collected=%s target=%s file_ok=%s", n, args.target, os.path.isfile(path))
         return 0 if ok else 1
