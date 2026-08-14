@@ -108,12 +108,14 @@ class DigitizerScanner:
         return asyncio.get_running_loop().run_in_executor(self._executor, fn, *args)
 
     def _do_open(self):
+        self._trace("open_digitizer2", self.connection_type, self.arg, self.conet_node, self.vme_base_address)
         dev = open_device(
             self.connection_type,
             self.arg,
             self.conet_node,
             self.vme_base_address,
         )
+        self._trace("get_info")
         return dev, dev.get_info()
 
     async def open(self):
@@ -143,6 +145,7 @@ class DigitizerScanner:
     def _do_close(self):
         if self.device is not None:
             try:
+                self._trace("close_digitizer (free_event + free_readout_buffer + close)")
                 self.device.close()
             finally:
                 self.device = None
@@ -158,13 +161,17 @@ class DigitizerScanner:
             raise RuntimeError("Digitizer not open")
 
         dev = self.device
+        self._trace("reset")
         dev.reset()
 
         self._mode = cfg.get("trigger_mode", "random")
         if self._mode == "external":
+            self._trace("set_ext_trigger_input_mode", TriggerMode.ACQ_ONLY)
             dev.set_ext_trigger_input_mode(TriggerMode.ACQ_ONLY)
         else:
+            self._trace("set_sw_trigger_mode", TriggerMode.ACQ_ONLY)
             dev.set_sw_trigger_mode(TriggerMode.ACQ_ONLY)
+            self._trace("set_ext_trigger_input_mode", TriggerMode.DISABLED)
             dev.set_ext_trigger_input_mode(TriggerMode.DISABLED)
 
         driver = self.driver
@@ -180,6 +187,7 @@ class DigitizerScanner:
         # SendSWtrigger -> ReadData pattern) and a modest max-events-per-BLT so
         # each transfer completes promptly.
         dev.set_acquisition_mode(AcqMode.SW_CONTROLLED)
+        self._trace("set_max_num_events_blt", 64)
         self._attempt(lambda: dev.set_max_num_events_blt(64))
 
         # Record length is a shared call, but only meaningful where the board
@@ -187,7 +195,9 @@ class DigitizerScanner:
         if driver.record_length_configurable:
             record_length = cfg.get("record_length")
             if record_length:
+                self._trace("set_record_length", int(record_length))
                 self._attempt(lambda: dev.set_record_length(int(record_length)))
+        self._trace("get_record_length")
         self.record_length = self._attempt(dev.get_record_length) or 0
 
         driver.input_range_vpp = float(cfg["input_range_vpp"]) if cfg.get("input_range_vpp") else None
@@ -195,17 +205,20 @@ class DigitizerScanner:
         self.calibrated = driver.calibrated
         self.drs4_time = driver.drs4_time
 
-        dev.malloc_readout_buffer()
+        self._trace("malloc_readout_buffer")
+        readout_size = dev.malloc_readout_buffer()
+        self._trace("allocate_event")
         dev.allocate_event()
         _LOG.info(
             "digitizer configured: mode=%s groups=%s channels_per_group=%s total_channels=%s "
-            "enabled_channels=%s record_length=%s input_range_vpp=%s calibrated=%s",
+            "enabled_channels=%s record_length=%s readout_buffer_bytes=%s input_range_vpp=%s calibrated=%s",
             self._mode,
             driver.n_groups,
             driver.channels_per_group,
             driver.n_total,
             self.enabled_channels,
             self.record_length,
+            readout_size,
             self.input_range_vpp,
             self.calibrated,
         )
@@ -219,6 +232,13 @@ class DigitizerScanner:
             return fn()
         except Error:
             return None
+
+    def _trace(self, name: str, *args) -> None:
+        """Debug-trace a CAEN C call just before invoking it. The last trace
+        line before a glibc 'malloc(): corrupted top size' crash identifies the
+        exact C call that corrupted the heap (glibc reports late, so without
+        this the crash log points at the wrong line)."""
+        _LOG.debug("CAEN call %s%r", name, tuple(args) if args else "")
 
     # ── per-point acquisition ───────────────────────────────────
 
@@ -251,7 +271,9 @@ class DigitizerScanner:
         self._last_milestone = -1
 
         dev = self.device
+        self._trace("clear_data")
         dev.clear_data()
+        self._trace("sw_start_acquisition")
         dev.sw_start_acquisition()
         self._last_sw = time.monotonic()
 
@@ -279,6 +301,7 @@ class DigitizerScanner:
                 due = max(1, min(due, _MAX_TRIGGERS_PER_STEP))
                 t_sw = time.monotonic()
                 for _ in range(due):
+                    self._trace("send_sw_trigger")
                     dev.send_sw_trigger()
                 t_sw = time.monotonic() - t_sw
                 self._sw_triggers_sent += due
@@ -325,8 +348,10 @@ class DigitizerScanner:
                 self._read_attempts,
                 _READ_MODE.name,
             )
+            self._trace("read_data", _READ_MODE)
             dev.read_data(_READ_MODE)
             t_read = time.monotonic() - t0
+            self._trace("get_num_events")
             n_events = dev.get_num_events()
             if t_read > 2.0:
                 _LOG.warning(
@@ -346,7 +371,9 @@ class DigitizerScanner:
                     n_events,
                 )
         for i in range(n_events or 0):
+            self._trace("get_event_info", i)
             info, buf = dev.get_event_info(i)
+            self._trace("decode_event", i)
             evt = dev.decode_event(buf)
             extracted = self._extract_event(evt)
             if extracted is None:
@@ -418,6 +445,7 @@ class DigitizerScanner:
     def _do_end_point(self) -> dict:
         dev = self.device
         try:
+            self._trace("sw_stop_acquisition")
             dev.sw_stop_acquisition()
         except Error:
             pass

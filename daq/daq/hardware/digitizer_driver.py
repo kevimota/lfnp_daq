@@ -181,14 +181,18 @@ class DigitizerDriver(ABC):
         """Run a board-specific CAEN call, surfacing failures clearly. An Error
         here usually means the wrong API family was used for the connected board
         (a board-detection bug), so we re-raise with an explicit message."""
+        name = getattr(fn, "__name__", str(fn))
+        _LOG.debug("%s: CAEN call %s%r", self.model_name, name, tuple(args))
         try:
-            return fn(*args)
+            res = fn(*args)
         except Error as e:
             raise RuntimeError(
-                f"{self.model_name}: CAEN call {getattr(e, 'func', fn.__name__)} "
+                f"{self.model_name}: CAEN call {getattr(e, 'func', name)} "
                 f"unsupported or failed — check digitizer board detection "
                 f"(model={int(self.model)}) — {e}"
             ) from e
+        _LOG.debug("%s: CAEN call %s -> OK", self.model_name, name)
+        return res
 
     def configure(self, dev, cfg: dict) -> None:
         """Board-specific configuration. Validate the config, then apply the
