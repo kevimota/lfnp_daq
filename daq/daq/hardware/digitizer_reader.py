@@ -59,6 +59,7 @@ class DigitizerScanner:
         self.info = None
         self.driver: Optional[DigitizerDriver] = None
         self.is_drs4 = False
+        self.is_sam = False
         self.enabled_channels: list[int] = []
         self.record_length = 0
         self.input_range_vpp: Optional[float] = None
@@ -124,13 +125,18 @@ class DigitizerScanner:
         self.info = info
         self.driver = build_driver(info)
         self.is_drs4 = self.driver.drs4
+        self.is_sam = self.driver.sam
         _LOG.info(
-            "digitizer opened in %.2fs: %s serial=%s channels=%s drs4=%s",
+            "digitizer opened in %.2fs: %s model=%s serial=%s groups=%s "
+            "channels_per_group=%s drs4=%s sam=%s",
             time.monotonic() - t0,
             getattr(info, "model_name", "?"),
+            int(info.model),
             getattr(info, "serial_number", "?"),
             getattr(info, "channels", "?"),
+            self.driver.channels_per_group,
             self.is_drs4,
+            self.is_sam,
         )
         return self
 
@@ -162,40 +168,29 @@ class DigitizerScanner:
             dev.set_ext_trigger_input_mode(TriggerMode.DISABLED)
 
         driver = self.driver
-        n_total = driver.n_total
-        mask = 0
-        enabled = []
-        for ch in cfg.get("channels", []):
-            ch_num = int(ch["channel"])
-            if ch.get("enabled") and 0 <= ch_num < n_total:
-                mask |= 1 << ch_num
-                enabled.append(ch_num)
-        if not enabled:
-            mask = (1 << n_total) - 1
-            enabled = list(range(n_total))
-        self.enabled_channels = enabled
-        driver.enabled_channels = enabled
-        driver.set_enable_mask(dev, mask)
 
-        # Match CAEN's ReadoutTest sample: software-controlled acquisition
-        # (required for the SendSWtrigger -> ReadData pattern) and a modest
-        # max-events-per-BLT so each transfer completes promptly.
+        # Board-specific configuration: enable mask, post-trigger size,
+        # sampling frequency/calibration and any optional trigger/offset
+        # settings. All DRS4/SAM API calls are isolated in the driver so they
+        # are never mixed across boards.
+        driver.configure(dev, cfg)
+        self.enabled_channels = list(driver.enabled_channels)
+
+        # Shared setup: acquisition mode (software-controlled, required for the
+        # SendSWtrigger -> ReadData pattern) and a modest max-events-per-BLT so
+        # each transfer completes promptly.
         dev.set_acquisition_mode(AcqMode.SW_CONTROLLED)
         self._attempt(lambda: dev.set_max_num_events_blt(64))
 
-        defaults = driver.config_defaults()
-        self._attempt(
-            lambda: dev.set_post_trigger_size(int(cfg.get("post_trigger_size", defaults.get("post_trigger_size", 50))))
-        )
-
-        if not driver.drs4:
+        # Record length is a shared call, but only meaningful where the board
+        # supports it (SAM yes; DRS4 is fixed at 1024 samples).
+        if driver.record_length_configurable:
             record_length = cfg.get("record_length")
             if record_length:
                 self._attempt(lambda: dev.set_record_length(int(record_length)))
         self.record_length = self._attempt(dev.get_record_length) or 0
 
         driver.input_range_vpp = float(cfg["input_range_vpp"]) if cfg.get("input_range_vpp") else None
-        driver.configure_frequency(dev, cfg)
         self.input_range_vpp = driver.input_range_vpp
         self.calibrated = driver.calibrated
         self.drs4_time = driver.drs4_time

@@ -31,6 +31,19 @@ class DigitizerScan(CurrentScanner):
 
     async def run_current_scan(self, config: dict, run_id: int) -> dict:
         await self.digitizer.open()
+        driver = self.digitizer.driver
+        _LOG.info(
+            "run=%s: digitizer board %s (model=%s, %s groups x %s channels = %s total, "
+            "drs4=%s sam=%s)",
+            run_id,
+            getattr(self.digitizer.info, "model_name", "?"),
+            int(driver.model),
+            driver.n_groups,
+            driver.channels_per_group,
+            driver.n_total,
+            driver.drs4,
+            driver.sam,
+        )
         await self.digitizer.configure(config)
         try:
             return await super().run_current_scan(config, run_id)

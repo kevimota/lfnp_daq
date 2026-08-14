@@ -82,8 +82,8 @@
   let editTriggerFrequencyHz = $state<number>(1);
   let editSamplingFrequencyHz = $state<number | null>(null);
   let editNumberOfTriggers = $state<number>(100);
-  let editRecordLength = $state<number>(2048);
-  let editPostTriggerSize = $state<number>(1024);
+  let editRecordLength = $state<number>(1024);
+  let editPostTriggerSize = $state<number>(50);
   let editInputRangeVpp = $state<number | null>(null);
   let editChannels = $state<DigitizerChannel[]>([]);
   let editVoltagePoints = $state<{ slot: number; channel: number; voltage: number }[][]>([]);
@@ -136,8 +136,8 @@
       editTriggerFrequencyHz = data.trigger_frequency_hz ?? 1;
       editSamplingFrequencyHz = data.sampling_frequency_hz ?? null;
       editNumberOfTriggers = data.number_of_triggers ?? 100;
-      editRecordLength = data.record_length ?? 2048;
-      editPostTriggerSize = data.post_trigger_size ?? 1024;
+      editRecordLength = data.record_length ?? 1024;
+      editPostTriggerSize = data.post_trigger_size ?? 50;
       editInputRangeVpp = data.input_range_vpp ?? null;
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
@@ -166,6 +166,31 @@
     return 8;
   }
 
+  // Valid sampling frequencies per board model (DT5742 DRS4: 5/2.5/1/0.75 GS/s,
+  // DT5743 SAMLONG: 3.2/1.6/0.8/0.4 GS/s).
+  const SAMPLING_FREQUENCIES: Record<number, number[]> = {
+    18: [5_000_000_000, 2_500_000_000, 1_000_000_000, 750_000_000],
+    27: [3_200_000_000, 1_600_000_000, 800_000_000, 400_000_000],
+  };
+  const DEFAULT_SAMPLING: Record<number, number> = { 18: 5_000_000_000, 27: 3_200_000_000 };
+
+  function digitizerBoardModel(id: number | null): number {
+    return digitizers.find(d => d.id === id)?.board_model ?? 0;
+  }
+
+  function samplingOptions(boardModel: number): number[] {
+    return SAMPLING_FREQUENCIES[boardModel] ?? [];
+  }
+
+  function formatSamplingFrequency(hz: number): string {
+    return `${hz / 1e9} GS/s`;
+  }
+
+  function defaultSamplingLabel(boardModel: number): string {
+    const hz = DEFAULT_SAMPLING[boardModel];
+    return hz != null ? `Hardware default (${formatSamplingFrequency(hz)})` : 'Hardware default';
+  }
+
   function defaultChannels(): DigitizerChannel[] {
     const dm = digitizers.find(d => d.id === editDigitizerId)?.board_model ?? 0;
     const n = channelCountForBoard(dm);
@@ -182,6 +207,8 @@
 
   function selectEditDigitizer(id: number) {
     editDigitizerId = id;
+    editSamplingFrequencyHz = null;
+    editChannels = defaultChannels();
   }
 
   function toggleEditChannel(ch: DigitizerChannel) {
@@ -384,6 +411,12 @@
         editTriggerMode = parsed.trigger_mode ?? editTriggerMode;
         editTriggerFrequencyHz = parsed.trigger_frequency_hz ?? editTriggerFrequencyHz;
         if (parsed.sampling_frequency_hz != null) editSamplingFrequencyHz = parsed.sampling_frequency_hz;
+        if (editScanType === 'digitizer_scan' && editSamplingFrequencyHz != null) {
+          const dm = digitizerBoardModel(editDigitizerId);
+          if (!samplingOptions(dm).includes(Number(editSamplingFrequencyHz))) {
+            editSamplingFrequencyHz = null;
+          }
+        }
         editNumberOfTriggers = parsed.number_of_triggers ?? editNumberOfTriggers;
         editRecordLength = parsed.record_length ?? editRecordLength;
         editPostTriggerSize = parsed.post_trigger_size ?? editPostTriggerSize;
@@ -452,8 +485,8 @@
       editTriggerFrequencyHz = data.trigger_frequency_hz ?? 1;
       editSamplingFrequencyHz = data.sampling_frequency_hz ?? null;
       editNumberOfTriggers = data.number_of_triggers ?? 100;
-      editRecordLength = data.record_length ?? 2048;
-      editPostTriggerSize = data.post_trigger_size ?? 1024;
+      editRecordLength = data.record_length ?? 1024;
+      editPostTriggerSize = data.post_trigger_size ?? 50;
       editInputRangeVpp = data.input_range_vpp ?? null;
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
@@ -701,18 +734,23 @@
                         bind:value={editNumberOfTriggers} />
                     </label>
                     <label class="form-control flex flex-col">
-                      <span class="label-text">Record Length</span>
-                      <input type="number" class="input input-bordered"
+                      <span class="label-text">Record Length (DRS4 fixed at 1024)</span>
+                      <input type="number" min="1" max="1024" class="input input-bordered"
                         bind:value={editRecordLength} />
                     </label>
                     <label class="form-control flex flex-col">
-                      <span class="label-text">Sampling Frequency (Hz, optional)</span>
-                      <input type="number" class="input input-bordered" step="100000000"
-                        bind:value={editSamplingFrequencyHz} placeholder="e.g. 5000000000 (hardware default if empty)" />
+                      <span class="label-text">Sampling Frequency ({#if samplingOptions(digitizerBoardModel(editDigitizerId)).length}
+                        only {samplingOptions(digitizerBoardModel(editDigitizerId)).map(formatSamplingFrequency).join(' / ')}{/if})</span>
+                      <select class="select select-bordered" bind:value={editSamplingFrequencyHz}>
+                        <option value={null}>{defaultSamplingLabel(digitizerBoardModel(editDigitizerId))}</option>
+                        {#each samplingOptions(digitizerBoardModel(editDigitizerId)) as hz}
+                          <option value={hz}>{formatSamplingFrequency(hz)} ({hz} Hz)</option>
+                        {/each}
+                      </select>
                     </label>
                     <label class="form-control flex flex-col">
-                      <span class="label-text">Post Trigger Size</span>
-                      <input type="number" class="input input-bordered"
+                      <span class="label-text">Post Trigger Size (%, 0-100)</span>
+                      <input type="number" min="0" max="100" step="1" class="input input-bordered"
                         bind:value={editPostTriggerSize} />
                     </label>
                     <label class="form-control flex flex-col">

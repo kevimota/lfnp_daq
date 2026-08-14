@@ -14,6 +14,62 @@ from . import ScanContext, data_writer, scan_manager, _background_scan
 
 router = APIRouter()
 
+#: Valid sampling frequencies (Hz) per digitizer board model (18 = DT5742 DRS4,
+#: 27 = DT5743 SAMLONG). Mirrors backend/app/routes/daq.py.
+_DIGITIZER_SAMPLING_FREQUENCIES = {
+    18: {5_000_000_000, 2_500_000_000, 1_000_000_000, 750_000_000},
+    27: {3_200_000_000, 1_600_000_000, 800_000_000, 400_000_000},
+}
+
+#: Number of channels per digitizer board model (DT5742: 2 groups x 8,
+#: DT5743: 4 groups x 2).
+_DIGITIZER_CHANNEL_COUNTS = {18: 16, 27: 8}
+
+
+def _validate_digitizer_board_specific(config_row, dig_row) -> None:
+    """Validate board-specific digitizer config (sampling frequency, post-trigger
+    size, channel range) against the digitizer board model."""
+    board_model = dig_row.board_model
+    if board_model not in _DIGITIZER_CHANNEL_COUNTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported digitizer board_model {board_model}: only "
+                "DT5742 and DT5743 are supported"
+            ),
+        )
+
+    if config_row.sampling_frequency_hz is not None:
+        freqs = _DIGITIZER_SAMPLING_FREQUENCIES[board_model]
+        if round(float(config_row.sampling_frequency_hz)) not in freqs:
+            allowed = ", ".join(f"{f / 1e9:g} GS/s ({f} Hz)" for f in sorted(freqs))
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"sampling_frequency_hz {config_row.sampling_frequency_hz} not "
+                    f"supported for board_model {board_model}: allowed values "
+                    f"are {allowed}"
+                ),
+            )
+
+    if config_row.post_trigger_size is not None and not (0 <= config_row.post_trigger_size <= 100):
+        raise HTTPException(
+            status_code=400,
+            detail="post_trigger_size must be a percentage 0-100",
+        )
+
+    if config_row.channels:
+        n_channels = _DIGITIZER_CHANNEL_COUNTS[board_model]
+        for ch in config_row.channels:
+            if ch.get("enabled") and not (0 <= int(ch["channel"]) < n_channels):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"channel {ch['channel']} out of range for board_model "
+                        f"{board_model} (0..{n_channels - 1})"
+                    ),
+                )
+
 
 @router.get("/runs/{run_id}/status", response_model=DAQStatusResponse)
 async def get_status(run_id: int):
@@ -134,6 +190,7 @@ async def start_scan(run_id: int):
                     status_code=400,
                     detail="trigger_frequency_hz must be > 0 for random trigger mode",
                 )
+            _validate_digitizer_board_specific(config_row, dig_row)
             digitizer_scanner = DigitizerScanner(dig_row)
             config["digitizer_id"] = config_row.digitizer_id
             config["trigger_mode"] = config_row.trigger_mode

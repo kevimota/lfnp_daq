@@ -65,11 +65,20 @@
     trigger_frequency_hz: 1,
     sampling_frequency_hz: null as number | null,
     number_of_triggers: 100,
-    record_length: 2048,
-    post_trigger_size: 1024,
+    record_length: 1024,
+    post_trigger_size: 50,
     input_range_vpp: null as number | null,
     channels: [] as DigitizerChannel[],
   });
+
+  // Valid scan configuration for each supported digitizer board model:
+  // DT5742 (18, DRS4) -> 5 / 2.5 / 1 / 0.75 GS/s, 16 channels (2 groups x 8)
+  // DT5743 (27, SAMLONG) -> 3.2 / 1.6 / 0.8 / 0.4 GS/s, 8 channels (4 groups x 2)
+  const SAMPLING_FREQUENCIES: Record<number, number[]> = {
+    18: [5_000_000_000, 2_500_000_000, 1_000_000_000, 750_000_000],
+    27: [3_200_000_000, 1_600_000_000, 800_000_000, 400_000_000],
+  };
+  const DEFAULT_SAMPLING: Record<number, number> = { 18: 5_000_000_000, 27: 3_200_000_000 };
 
   let jsonConfig = $state('');
 
@@ -122,6 +131,23 @@
     return 8;
   }
 
+  function digitizerBoardModel(id: number | null): number {
+    return digitizers.find(d => d.id === id)?.board_model ?? 0;
+  }
+
+  function samplingOptions(boardModel: number): number[] {
+    return SAMPLING_FREQUENCIES[boardModel] ?? [];
+  }
+
+  function formatSamplingFrequency(hz: number): string {
+    return `${hz / 1e9} GS/s`;
+  }
+
+  function defaultSamplingLabel(boardModel: number): string {
+    const hz = DEFAULT_SAMPLING[boardModel];
+    return hz != null ? `Hardware default (${formatSamplingFrequency(hz)})` : 'Hardware default';
+  }
+
   function defaultChannels(): DigitizerChannel[] {
     const dm = digitizers.find(d => d.id === newScan.digitizer_id)?.board_model ?? 0;
     const n = channelCountForBoard(dm);
@@ -143,6 +169,8 @@
 
   function selectDigitizer(id: number) {
     newScan.digitizer_id = id;
+    newScan.sampling_frequency_hz = null;
+    newScan.channels = defaultChannels();
   }
 
   function toggleDigitizerChannel(ch: DigitizerChannel) {
@@ -194,8 +222,8 @@
       newScan.trigger_frequency_hz = config.trigger_frequency_hz ?? 1;
       newScan.sampling_frequency_hz = config.sampling_frequency_hz ?? null;
       newScan.number_of_triggers = config.number_of_triggers ?? 100;
-      newScan.record_length = config.record_length ?? 2048;
-      newScan.post_trigger_size = config.post_trigger_size ?? 1024;
+      newScan.record_length = config.record_length ?? 1024;
+      newScan.post_trigger_size = config.post_trigger_size ?? 50;
       newScan.input_range_vpp = config.input_range_vpp ?? null;
       newScan.channels = config.channels?.length ? config.channels : defaultChannels();
       syncJson();
@@ -252,6 +280,12 @@
       newScan.number_of_triggers = parsed.number_of_triggers ?? newScan.number_of_triggers;
       newScan.record_length = parsed.record_length ?? newScan.record_length;
       newScan.post_trigger_size = parsed.post_trigger_size ?? newScan.post_trigger_size;
+      if (newScan.type === 'digitizer_scan' && newScan.sampling_frequency_hz != null) {
+        const dm = digitizerBoardModel(newScan.digitizer_id);
+        if (!samplingOptions(dm).includes(Number(newScan.sampling_frequency_hz))) {
+          newScan.sampling_frequency_hz = null;
+        }
+      }
       newScan.input_range_vpp = parsed.input_range_vpp ?? newScan.input_range_vpp;
       if (parsed.channels) newScan.channels = parsed.channels;
       if (newScan.type === 'digitizer_scan' && newScan.channels.length === 0) {
@@ -292,8 +326,8 @@
       trigger_frequency_hz: 1,
       sampling_frequency_hz: null as number | null,
       number_of_triggers: 100,
-      record_length: 2048,
-      post_trigger_size: 1024,
+      record_length: 1024,
+      post_trigger_size: 50,
       input_range_vpp: null as number | null,
       channels: [] as DigitizerChannel[],
     };
@@ -527,18 +561,23 @@
                   bind:value={newScan.number_of_triggers} />
               </label>
               <label class="form-control">
-                <span class="label-text">Record Length</span>
-                <input type="number" class="input input-bordered"
+                <span class="label-text">Record Length (DRS4 fixed at 1024)</span>
+                <input type="number" min="1" max="1024" class="input input-bordered"
                   bind:value={newScan.record_length} />
               </label>
               <label class="form-control">
-                <span class="label-text">Sampling Frequency (Hz, optional)</span>
-                <input type="number" class="input input-bordered" step="100000000"
-                  bind:value={newScan.sampling_frequency_hz} placeholder="e.g. 5000000000 (hardware default if empty)" />
+                <span class="label-text">Sampling Frequency ({#if samplingOptions(digitizerBoardModel(newScan.digitizer_id)).length}
+                  only {samplingOptions(digitizerBoardModel(newScan.digitizer_id)).map(formatSamplingFrequency).join(' / ')}{/if})</span>
+                <select class="select select-bordered" bind:value={newScan.sampling_frequency_hz}>
+                  <option value={null}>{defaultSamplingLabel(digitizerBoardModel(newScan.digitizer_id))}</option>
+                  {#each samplingOptions(digitizerBoardModel(newScan.digitizer_id)) as hz}
+                    <option value={hz}>{formatSamplingFrequency(hz)} ({hz} Hz)</option>
+                  {/each}
+                </select>
               </label>
               <label class="form-control">
-                <span class="label-text">Post Trigger Size</span>
-                <input type="number" class="input input-bordered"
+                <span class="label-text">Post Trigger Size (%, 0-100)</span>
+                <input type="number" min="0" max="100" step="1" class="input input-bordered"
                   bind:value={newScan.post_trigger_size} />
               </label>
               <label class="form-control">

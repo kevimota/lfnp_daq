@@ -110,6 +110,17 @@ def delete_configuration(config_id: int, session: SessionDep):
 
 _ACTIVE_RUN_STATUSES = {"running"}
 
+#: Valid sampling frequencies (Hz) per digitizer board model (18 = DT5742 DRS4,
+#: 27 = DT5743 SAMLONG).
+_DIGITIZER_SAMPLING_FREQUENCIES = {
+    18: {5_000_000_000, 2_500_000_000, 1_000_000_000, 750_000_000},
+    27: {3_200_000_000, 1_600_000_000, 800_000_000, 400_000_000},
+}
+
+#: Number of channels per digitizer board model (DT5742: 2 groups x 8,
+#: DT5743: 4 groups x 2).
+_DIGITIZER_CHANNEL_COUNTS = {18: 16, 27: 8}
+
 
 async def _proxy_to_daq(run_id: int, action: str, method: str = "POST") -> dict:
     daq_url = config.DAQ_URL
@@ -179,6 +190,47 @@ def _validate_scan_params(req: RunCreateRequest, session) -> None:
                 status_code=404,
                 detail=f"Digitizer (id={req.digitizer_id}) not found",
             )
+
+        board_model = dig_row.board_model
+        if board_model not in _DIGITIZER_CHANNEL_COUNTS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unsupported digitizer board_model {board_model}: only "
+                    "DT5742 and DT5743 are supported"
+                ),
+            )
+
+        if req.sampling_frequency_hz is not None:
+            freqs = _DIGITIZER_SAMPLING_FREQUENCIES[board_model]
+            if round(float(req.sampling_frequency_hz)) not in freqs:
+                allowed = ", ".join(f"{f / 1e9:g} GS/s ({f} Hz)" for f in sorted(freqs))
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"sampling_frequency_hz {req.sampling_frequency_hz} not "
+                        f"supported for board_model {board_model}: allowed values "
+                        f"are {allowed}"
+                    ),
+                )
+
+        if req.post_trigger_size is not None and not (0 <= req.post_trigger_size <= 100):
+            raise HTTPException(
+                status_code=400,
+                detail="post_trigger_size must be a percentage 0-100",
+            )
+
+        if req.channels:
+            n_channels = _DIGITIZER_CHANNEL_COUNTS[board_model]
+            for ch in req.channels:
+                if ch.get("enabled") and not (0 <= int(ch["channel"]) < n_channels):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"channel {ch['channel']} out of range for board_model "
+                            f"{board_model} (0..{n_channels - 1})"
+                        ),
+                    )
     elif req.type != "hv_scan":
         raise HTTPException(
             status_code=400,
