@@ -30,6 +30,9 @@ class DigitizerScan(CurrentScanner):
         self.digitizer = digitizer
 
     async def run_current_scan(self, config: dict, run_id: int) -> dict:
+        return await super().run_current_scan(config, run_id)
+
+    async def _prepare(self, config: dict, run_id: int):
         await self.digitizer.open()
         driver = self.digitizer.driver
         _LOG.info(
@@ -45,10 +48,9 @@ class DigitizerScan(CurrentScanner):
             driver.sam,
         )
         await self.digitizer.configure(config)
-        try:
-            return await super().run_current_scan(config, run_id)
-        finally:
-            await self.digitizer.close()
+
+    async def _cleanup(self):
+        await self.digitizer.close()
 
     async def _record_point(self, run_dir: str, point_index: int, point_config: list, config: dict):
         sample_interval = config.get("sample_interval_seconds", 1)

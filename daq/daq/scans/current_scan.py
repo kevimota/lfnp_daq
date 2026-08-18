@@ -40,9 +40,10 @@ class CurrentScanner:
         if not self.fsm.start(config, run_id):
             return {"success": False, "error": "Failed to start scan"}
 
-        self.power.power_all_on(voltage_points[0])
-
         try:
+            await self._prepare(config, run_id)
+            self.power.power_all_on(voltage_points[0])
+
             for point_index, point_config in enumerate(voltage_points):
                 if self._stop_requested:
                     break
@@ -100,6 +101,7 @@ class CurrentScanner:
             self.fsm.fail(str(e))
             return {"success": False, "error": str(e)}
         finally:
+            await self._cleanup()
             if voltage_points:
                 if end_voltage < 100:
                     for item in voltage_points[0]:
@@ -112,6 +114,14 @@ class CurrentScanner:
                     self.power.set_all_voltages(voltage_points[0])
             self.power.disconnect()
             self._stop_requested = False
+
+    async def _prepare(self, config: dict, run_id: int):
+        """Hook run after the FSM has started; any exception is recorded as a scan failure."""
+        pass
+
+    async def _cleanup(self):
+        """Hook run in the finally block; release any hardware opened in _prepare."""
+        pass
 
     async def _record_point(self, run_dir: str, point_index: int, point_config: list, config: dict):
         """Sample power data for the current point until number_of_samples is reached."""
