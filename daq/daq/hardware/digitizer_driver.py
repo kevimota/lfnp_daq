@@ -21,6 +21,7 @@ is re-raised with a clear message (it usually means a board-detection bug).
 """
 import ctypes as ct
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -101,6 +102,41 @@ def _drs4_tsamp_ps(hz: int) -> float:
     the sample's bug of mapping every unlisted frequency (incl. 750 MHz) to
     the 5 GHz default."""
     return (1.0 / (hz / 1e9)) * 1000.0
+
+
+def _set_drs4_frequency_with_retry(driver, dev, freq: DRS4Frequency, hz: int) -> bool:
+    """Set the DRS4 sampling rate, retrying recoverable COMM_ERRORs.
+
+    Changing the DRS4 rate re-clocks the sampling chips via a slow serial
+    access; over a healthy but busy link this can transiently return
+    COMM_ERROR. Retry a few times before giving up.
+
+    Returns True once the write succeeded; False if every attempt failed with
+    COMM_ERROR. Any non-COMM error is raised immediately (it usually means a
+    board-detection bug rather than a transient link glitch).
+    """
+    last_err = None
+    for attempt in range(1, 4):
+        try:
+            dev.set_drs4_sampling_frequency(freq)
+        except Error as e:
+            last_err = e
+            if e.code != Error.Code.COMM_ERROR:
+                raise
+            _LOG.warning(
+                "DT5742: CAEN_DGTZ_SetDRS4SamplingFrequency COMM_ERROR "
+                "(attempt %d/3) - retrying",
+                attempt,
+            )
+            time.sleep(0.5)
+            continue
+        _LOG.info("DT5742: DRS4 sampling frequency set to %s Hz", hz)
+        return True
+    _LOG.error(
+        "DT5742: CAEN_DGTZ_SetDRS4SamplingFrequency failed after 3 attempts: %s",
+        last_err,
+    )
+    return False
 
 
 def _peak_correction(waveforms: list[np.ndarray]) -> list[np.ndarray]:
@@ -361,7 +397,23 @@ class X742Driver(DigitizerDriver):
     def configure_frequency(self, dev, cfg: dict) -> None:
         hz = self._resolve_frequency_hz(cfg)
         freq = _DRS4_FREQUENCIES_BY_HZ[hz]
-        self._caen_call(dev.set_drs4_sampling_frequency, freq)
+        # The X742 changes the DRS4 sampling rate by re-clocking the sampling
+        # chips, which requires a slow serial access. Re-issuing the value the
+        # board already runs at (e.g. the 5 GS/s boot default) can transiently
+        # fail with a CAENComm COMM_ERROR even though the link is healthy. Read
+        # the current rate first and only rewrite when it actually differs.
+        try:
+            current = dev.get_drs4_sampling_frequency()
+        except Error as e:
+            _LOG.debug("DT5742: GetDRS4SamplingFrequency failed (%s)", e)
+            current = None
+        if current == freq:
+            _LOG.info("DT5742: DRS4 sampling frequency already %s Hz", hz)
+        else:
+            # Retry recoverable COMM errors first; the final attempt re-raises
+            # through _caen_call so a real failure keeps the usual clear error.
+            if not _set_drs4_frequency_with_retry(self, dev, freq, hz):
+                self._caen_call(dev.set_drs4_sampling_frequency, freq)
         self._resolved_frequency_hz = hz
         # Read the per-group correction tables from flash and apply them OFFLINE
         # in extract(). The on-board load/enable path is deliberately NOT used:
