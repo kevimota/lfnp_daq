@@ -66,7 +66,7 @@
     sampling_frequency_hz: null as number | null,
     number_of_triggers: 100,
     record_length: 1024,
-    post_trigger_size: 50,
+    post_trigger_size: 0,
     input_range_vpp: null as number | null,
     channels: [] as DigitizerChannel[],
   });
@@ -143,9 +143,8 @@
     return `${hz / 1e9} GS/s`;
   }
 
-  function defaultSamplingLabel(boardModel: number): string {
-    const hz = DEFAULT_SAMPLING[boardModel];
-    return hz != null ? `Hardware default (${formatSamplingFrequency(hz)})` : 'Hardware default';
+  function defaultSamplingHz(boardModel: number): number | null {
+    return DEFAULT_SAMPLING[boardModel] ?? samplingOptions(boardModel)[0] ?? null;
   }
 
   function defaultChannels(): DigitizerChannel[] {
@@ -160,6 +159,9 @@
       if (newScan.digitizer_id == null && digitizers.length > 0) {
         newScan.digitizer_id = digitizers[0].id;
       }
+      if (newScan.sampling_frequency_hz == null) {
+        newScan.sampling_frequency_hz = defaultSamplingHz(digitizerBoardModel(newScan.digitizer_id));
+      }
       if (newScan.channels.length === 0) newScan.channels = defaultChannels();
     } else {
       newScan.digitizer_id = null;
@@ -169,7 +171,7 @@
 
   function selectDigitizer(id: number) {
     newScan.digitizer_id = id;
-    newScan.sampling_frequency_hz = null;
+    newScan.sampling_frequency_hz = defaultSamplingHz(digitizerBoardModel(id));
     newScan.channels = defaultChannels();
   }
 
@@ -220,10 +222,11 @@
       newScan.digitizer_id = config.digitizer_id ?? (config.type === 'digitizer_scan' && digitizers.length > 0 ? digitizers[0].id : null);
       newScan.trigger_mode = config.trigger_mode ?? 'random';
       newScan.trigger_frequency_hz = config.trigger_frequency_hz ?? 1;
-      newScan.sampling_frequency_hz = config.sampling_frequency_hz ?? null;
+      newScan.sampling_frequency_hz = config.sampling_frequency_hz
+        ?? (config.type === 'digitizer_scan' ? defaultSamplingHz(digitizerBoardModel(newScan.digitizer_id)) : null);
       newScan.number_of_triggers = config.number_of_triggers ?? 100;
       newScan.record_length = config.record_length ?? 1024;
-      newScan.post_trigger_size = config.post_trigger_size ?? 50;
+      newScan.post_trigger_size = config.post_trigger_size ?? 0;
       newScan.input_range_vpp = config.input_range_vpp ?? null;
       newScan.channels = config.channels?.length ? config.channels : defaultChannels();
       syncJson();
@@ -283,7 +286,7 @@
       if (newScan.type === 'digitizer_scan' && newScan.sampling_frequency_hz != null) {
         const dm = digitizerBoardModel(newScan.digitizer_id);
         if (!samplingOptions(dm).includes(Number(newScan.sampling_frequency_hz))) {
-          newScan.sampling_frequency_hz = null;
+          newScan.sampling_frequency_hz = defaultSamplingHz(dm);
         }
       }
       newScan.input_range_vpp = parsed.input_range_vpp ?? newScan.input_range_vpp;
@@ -327,7 +330,7 @@
       sampling_frequency_hz: null as number | null,
       number_of_triggers: 100,
       record_length: 1024,
-      post_trigger_size: 50,
+      post_trigger_size: 0,
       input_range_vpp: null as number | null,
       channels: [] as DigitizerChannel[],
     };
@@ -561,7 +564,7 @@
                   bind:value={newScan.number_of_triggers} />
               </label>
               <label class="form-control">
-                <span class="label-text">Record Length (DRS4 fixed at 1024)</span>
+                <span class="label-text">Record Length (DT5742 fixed at 1024)</span>
                 <input type="number" min="1" max="1024" class="input input-bordered"
                   bind:value={newScan.record_length} />
               </label>
@@ -569,9 +572,8 @@
                 <span class="label-text">Sampling Frequency ({#if samplingOptions(digitizerBoardModel(newScan.digitizer_id)).length}
                   only {samplingOptions(digitizerBoardModel(newScan.digitizer_id)).map(formatSamplingFrequency).join(' / ')}{/if})</span>
                 <select class="select select-bordered" bind:value={newScan.sampling_frequency_hz}>
-                  <option value={null}>{defaultSamplingLabel(digitizerBoardModel(newScan.digitizer_id))}</option>
                   {#each samplingOptions(digitizerBoardModel(newScan.digitizer_id)) as hz}
-                    <option value={hz}>{formatSamplingFrequency(hz)} ({hz} Hz)</option>
+                    <option value={hz}>{formatSamplingFrequency(hz)}</option>
                   {/each}
                 </select>
               </label>

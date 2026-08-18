@@ -213,7 +213,7 @@ class DigitizerDriver(ABC):
     #: accepted values for ``sampling_frequency_hz`` (in Hz)
     supported_frequencies_hz: list[int] = []
     #: default post-trigger size in percent
-    post_trigger_default_percent = 50
+    post_trigger_default_percent = 0
 
     def __init__(self, info):
         self.info = info

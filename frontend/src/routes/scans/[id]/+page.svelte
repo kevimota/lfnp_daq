@@ -134,10 +134,11 @@
       editDigitizerId = data.digitizer_id ?? null;
       editTriggerMode = data.trigger_mode ?? 'random';
       editTriggerFrequencyHz = data.trigger_frequency_hz ?? 1;
-      editSamplingFrequencyHz = data.sampling_frequency_hz ?? null;
+      editSamplingFrequencyHz = data.sampling_frequency_hz
+        ?? (data.type === 'digitizer_scan' ? defaultSamplingHz(digitizerBoardModel(editDigitizerId)) : null);
       editNumberOfTriggers = data.number_of_triggers ?? 100;
       editRecordLength = data.record_length ?? 1024;
-      editPostTriggerSize = data.post_trigger_size ?? 50;
+      editPostTriggerSize = data.post_trigger_size ?? 0;
       editInputRangeVpp = data.input_range_vpp ?? null;
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
@@ -186,9 +187,8 @@
     return `${hz / 1e9} GS/s`;
   }
 
-  function defaultSamplingLabel(boardModel: number): string {
-    const hz = DEFAULT_SAMPLING[boardModel];
-    return hz != null ? `Hardware default (${formatSamplingFrequency(hz)})` : 'Hardware default';
+  function defaultSamplingHz(boardModel: number): number | null {
+    return DEFAULT_SAMPLING[boardModel] ?? samplingOptions(boardModel)[0] ?? null;
   }
 
   function defaultChannels(): DigitizerChannel[] {
@@ -202,12 +202,15 @@
     if (t === 'digitizer_scan') {
       if (editChannels.length === 0) editChannels = defaultChannels();
       if (editDigitizerId == null && digitizers.length > 0) editDigitizerId = digitizers[0].id;
+      if (editSamplingFrequencyHz == null) {
+        editSamplingFrequencyHz = defaultSamplingHz(digitizerBoardModel(editDigitizerId));
+      }
     }
   }
 
   function selectEditDigitizer(id: number) {
     editDigitizerId = id;
-    editSamplingFrequencyHz = null;
+    editSamplingFrequencyHz = defaultSamplingHz(digitizerBoardModel(id));
     editChannels = defaultChannels();
   }
 
@@ -414,7 +417,7 @@
         if (editScanType === 'digitizer_scan' && editSamplingFrequencyHz != null) {
           const dm = digitizerBoardModel(editDigitizerId);
           if (!samplingOptions(dm).includes(Number(editSamplingFrequencyHz))) {
-            editSamplingFrequencyHz = null;
+            editSamplingFrequencyHz = defaultSamplingHz(dm);
           }
         }
         editNumberOfTriggers = parsed.number_of_triggers ?? editNumberOfTriggers;
@@ -483,10 +486,11 @@
       editDigitizerId = data.digitizer_id ?? null;
       editTriggerMode = data.trigger_mode ?? 'random';
       editTriggerFrequencyHz = data.trigger_frequency_hz ?? 1;
-      editSamplingFrequencyHz = data.sampling_frequency_hz ?? null;
+      editSamplingFrequencyHz = data.sampling_frequency_hz
+        ?? (data.type === 'digitizer_scan' ? defaultSamplingHz(digitizerBoardModel(editDigitizerId)) : null);
       editNumberOfTriggers = data.number_of_triggers ?? 100;
       editRecordLength = data.record_length ?? 1024;
-      editPostTriggerSize = data.post_trigger_size ?? 50;
+      editPostTriggerSize = data.post_trigger_size ?? 0;
       editInputRangeVpp = data.input_range_vpp ?? null;
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
@@ -734,7 +738,7 @@
                         bind:value={editNumberOfTriggers} />
                     </label>
                     <label class="form-control flex flex-col">
-                      <span class="label-text">Record Length (DRS4 fixed at 1024)</span>
+                      <span class="label-text">Record Length (DT5742 fixed at 1024)</span>
                       <input type="number" min="1" max="1024" class="input input-bordered"
                         bind:value={editRecordLength} />
                     </label>
@@ -742,9 +746,8 @@
                       <span class="label-text">Sampling Frequency ({#if samplingOptions(digitizerBoardModel(editDigitizerId)).length}
                         only {samplingOptions(digitizerBoardModel(editDigitizerId)).map(formatSamplingFrequency).join(' / ')}{/if})</span>
                       <select class="select select-bordered" bind:value={editSamplingFrequencyHz}>
-                        <option value={null}>{defaultSamplingLabel(digitizerBoardModel(editDigitizerId))}</option>
                         {#each samplingOptions(digitizerBoardModel(editDigitizerId)) as hz}
-                          <option value={hz}>{formatSamplingFrequency(hz)} ({hz} Hz)</option>
+                          <option value={hz}>{formatSamplingFrequency(hz)}</option>
                         {/each}
                       </select>
                     </label>

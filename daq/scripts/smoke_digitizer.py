@@ -13,7 +13,7 @@ Run inside the ``daq`` container (native CAEN libraries are required):
     uv run python scripts/smoke_digitizer.py --auto-link
     # specific device + default software-trigger config:
     uv run python scripts/smoke_digitizer.py --connection-type usb --arg 0 \
-        --target 50 --freq 10.0 --post-trigger 50
+        --target 50 --freq 10.0 --post-trigger 0
     # hardware-trigger (external) mode, DT5743-style config if it's a SAM board:
     uv run python scripts/smoke_digitizer.py --arg 0 --mode external \
         --target 100 --sampling-frequency-hz 1600000000 --record-length 512
@@ -70,8 +70,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Override sampling frequency; omitted -> board default "
                         "(5 GS/s for DT5742, 3.2 GS/s for DT5743). "
                         "DT5742: 5e9/2.5e9/1e9/750e6. DT5743: 3.2e9/1.6e9/800e6/400e6.")
-    p.add_argument("--post-trigger", type=int, default=50,
-                   help="post-trigger size as percentage 0-100 (default 50)")
+    p.add_argument("--post-trigger", type=int, default=0,
+                   help="post-trigger size as percentage 0-100 (default 0)")
     p.add_argument("--record-length", type=int, default=None,
                    help="record length (only used on boards that support it, e.g. DT5743)")
     p.add_argument("--channels", default=None,
