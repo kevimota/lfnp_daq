@@ -131,6 +131,10 @@
     return 8;
   }
 
+  function supportsInputRange(board_model: number): boolean {
+    return board_model === 27; // DT5743 only; DT5742 has a fixed input range
+  }
+
   function digitizerBoardModel(id: number | null): number {
     return digitizers.find(d => d.id === id)?.board_model ?? 0;
   }
@@ -173,6 +177,7 @@
     newScan.digitizer_id = id;
     newScan.sampling_frequency_hz = defaultSamplingHz(digitizerBoardModel(id));
     newScan.channels = defaultChannels();
+    if (!supportsInputRange(digitizerBoardModel(id))) newScan.input_range_vpp = null;
   }
 
   function toggleDigitizerChannel(ch: DigitizerChannel) {
@@ -582,11 +587,13 @@
                 <input type="number" min="0" max="100" step="1" class="input input-bordered"
                   bind:value={newScan.post_trigger_size} />
               </label>
-              <label class="form-control">
-                <span class="label-text">Input Range (Vpp, optional)</span>
-                <input type="number" step="0.5" class="input input-bordered"
-                  bind:value={newScan.input_range_vpp} />
-              </label>
+              {#if supportsInputRange(digitizerBoardModel(newScan.digitizer_id))}
+                <label class="form-control">
+                  <span class="label-text">Input Range (Vpp, optional)</span>
+                  <input type="number" step="0.5" class="input input-bordered"
+                    bind:value={newScan.input_range_vpp} />
+                </label>
+              {/if}
             </div>
 
             <div class="form-control">

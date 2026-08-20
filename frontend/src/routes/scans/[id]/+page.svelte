@@ -167,6 +167,10 @@
     return 8;
   }
 
+  function supportsInputRange(board_model: number): boolean {
+    return board_model === 27; // DT5743 only; DT5742 has a fixed input range
+  }
+
   // Valid sampling frequencies per board model (DT5742 DRS4: 5/2.5/1/0.75 GS/s,
   // DT5743 SAMLONG: 3.2/1.6/0.8/0.4 GS/s).
   const SAMPLING_FREQUENCIES: Record<number, number[]> = {
@@ -212,6 +216,7 @@
     editDigitizerId = id;
     editSamplingFrequencyHz = defaultSamplingHz(digitizerBoardModel(id));
     editChannels = defaultChannels();
+    if (!supportsInputRange(digitizerBoardModel(id))) editInputRangeVpp = null;
   }
 
   function toggleEditChannel(ch: DigitizerChannel) {
@@ -756,11 +761,13 @@
                       <input type="number" min="0" max="100" step="1" class="input input-bordered"
                         bind:value={editPostTriggerSize} />
                     </label>
-                    <label class="form-control flex flex-col">
-                      <span class="label-text">Input Range (Vpp, optional)</span>
-                      <input type="number" step="0.5" class="input input-bordered"
-                        bind:value={editInputRangeVpp} />
-                    </label>
+{#if supportsInputRange(digitizerBoardModel(editDigitizerId))}
+                      <label class="form-control flex flex-col">
+                        <span class="label-text">Input Range (Vpp, optional)</span>
+                        <input type="number" step="0.5" class="input input-bordered"
+                          bind:value={editInputRangeVpp} />
+                      </label>
+                    {/if}
                   </div>
 
                   <div class="form-control">
