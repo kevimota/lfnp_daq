@@ -111,11 +111,7 @@ class DAQFSM:
             return False
 
         point_num = self._current_point_index + 1
-        sample_interval = self._configuration.get("sample_interval_seconds", 1)
-        number_of_samples = self._configuration.get("number_of_samples", 60)
-        duration = sample_interval*number_of_samples
-        
-        self.log_event(f"Recording started (point {point_num}, {duration}s)")
+        self.log_event(f"Recording started (point {point_num})")
         self._set_state(DAQState.RECORDING)
         return True
 

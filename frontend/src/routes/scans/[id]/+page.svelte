@@ -642,8 +642,8 @@
       {#if liveData.length > 0}
         <div class="card bg-base-200">
           <div class="card-body">
-            <h3 class="card-title">Live Data (last {liveData.length} samples)</h3>
-            <pre class="text-xs bg-base-300 p-3 rounded-box overflow-y-auto max-h-48 font-mono">{JSON.stringify(liveData.slice(-10), null, 2)}</pre>
+            <h3 class="card-title">Live Data</h3>
+            <pre class="text-xs bg-base-300 p-3 rounded-box overflow-y-auto max-h-48 font-mono">{JSON.stringify(liveData.slice(-5).map(({ type, point, ...rest }) => rest), null, 2)}</pre>
           </div>
         </div>
       {/if}
