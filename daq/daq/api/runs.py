@@ -199,8 +199,17 @@ async def start_scan(run_id: int):
             config["number_of_triggers"] = config_row.number_of_triggers
             config["record_length"] = config_row.record_length
             config["post_trigger_size"] = config_row.post_trigger_size
-            config["input_range_vpp"] = config_row.input_range_vpp
             config["channels"] = config_row.channels or []
+            if config_row.dc_offset is not None:
+                if not (0 <= config_row.dc_offset <= 0xFFFF):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"dc_offset must be a 16-bit DAC value 0-65535, "
+                            f"got {config_row.dc_offset}"
+                        ),
+                    )
+                config["dc_offset"] = config_row.dc_offset
 
     system_type = SystemType(ps_row.system_type)
     link_type = LinkType(ps_row.link_type)

@@ -67,7 +67,7 @@
     number_of_triggers: 100,
     record_length: 1024,
     post_trigger_size: 0,
-    input_range_vpp: null as number | null,
+    dc_offset_mv: 0,
     channels: [] as DigitizerChannel[],
   });
 
@@ -131,8 +131,22 @@
     return 8;
   }
 
-  function supportsInputRange(board_model: number): boolean {
-    return board_model === 27; // DT5743 only; DT5742 has a fixed input range
+  // DC-offset half-scale in mV per board: DT5742 (18) -> +/-0.5 V, DT5743 (27) -> +/-1.25 V.
+  // DAC code 0x8000 == 0 V (default center); code = 0x8000 + mv/half_scale * 0x8000.
+  const DC_OFFSET_HALF_SCALE_MV: Record<number, number> = { 18: 500, 27: 1250 };
+
+  function dcOffsetHalfScaleMv(boardModel: number): number {
+    return DC_OFFSET_HALF_SCALE_MV[boardModel] ?? 625;
+  }
+
+  function dcOffsetMvToCode(mv: number, boardModel: number): number {
+    const half = dcOffsetHalfScaleMv(boardModel);
+    return Math.max(0, Math.min(0xffff, Math.round(0x8000 + (mv / half) * 0x8000)));
+  }
+
+  function dcOffsetCodeToMv(code: number, boardModel: number): number {
+    const half = dcOffsetHalfScaleMv(boardModel);
+    return Math.round(((code - 0x8000) * half) / 0x8000);
   }
 
   function digitizerBoardModel(id: number | null): number {
@@ -177,7 +191,6 @@
     newScan.digitizer_id = id;
     newScan.sampling_frequency_hz = defaultSamplingHz(digitizerBoardModel(id));
     newScan.channels = defaultChannels();
-    if (!supportsInputRange(digitizerBoardModel(id))) newScan.input_range_vpp = null;
   }
 
   function toggleDigitizerChannel(ch: DigitizerChannel) {
@@ -232,7 +245,9 @@
       newScan.number_of_triggers = config.number_of_triggers ?? 100;
       newScan.record_length = config.record_length ?? 1024;
       newScan.post_trigger_size = config.post_trigger_size ?? 0;
-      newScan.input_range_vpp = config.input_range_vpp ?? null;
+      newScan.dc_offset_mv = config.dc_offset != null
+        ? dcOffsetCodeToMv(config.dc_offset, digitizerBoardModel(newScan.digitizer_id))
+        : 0;
       newScan.channels = config.channels?.length ? config.channels : defaultChannels();
       syncJson();
     } catch {}
@@ -257,7 +272,7 @@
               number_of_triggers: newScan.number_of_triggers,
               record_length: newScan.record_length,
               post_trigger_size: newScan.post_trigger_size,
-              input_range_vpp: newScan.input_range_vpp,
+              dc_offset_mv: newScan.dc_offset_mv,
               channels: newScan.channels,
             }
           : {}),
@@ -294,7 +309,7 @@
           newScan.sampling_frequency_hz = defaultSamplingHz(dm);
         }
       }
-      newScan.input_range_vpp = parsed.input_range_vpp ?? newScan.input_range_vpp;
+      newScan.dc_offset_mv = parsed.dc_offset_mv ?? newScan.dc_offset_mv;
       if (parsed.channels) newScan.channels = parsed.channels;
       if (newScan.type === 'digitizer_scan' && newScan.channels.length === 0) {
         newScan.channels = defaultChannels();
@@ -307,7 +322,16 @@
   async function createScan() {
     creating = true;
     try {
-      await api.post('/daq/runs', { ...newScan, label: newScan.label || undefined, comments: newScan.comments || undefined });
+      const payload = {
+        ...newScan,
+        dc_offset: newScan.type === 'digitizer_scan'
+          ? dcOffsetMvToCode(newScan.dc_offset_mv, digitizerBoardModel(newScan.digitizer_id))
+          : null,
+        label: newScan.label || undefined,
+        comments: newScan.comments || undefined,
+      };
+      delete (payload as any).dc_offset_mv;
+      await api.post('/daq/runs', payload);
       showNewModal = false;
       await fetchRuns();
       resetForm();
@@ -336,7 +360,7 @@
       number_of_triggers: 100,
       record_length: 1024,
       post_trigger_size: 0,
-      input_range_vpp: null as number | null,
+      dc_offset_mv: 0,
       channels: [] as DigitizerChannel[],
     };
     jsonConfig = '';
@@ -587,11 +611,15 @@
                 <input type="number" min="0" max="100" step="1" class="input input-bordered"
                   bind:value={newScan.post_trigger_size} />
               </label>
-              {#if supportsInputRange(digitizerBoardModel(newScan.digitizer_id))}
+              {#if newScan.type === 'digitizer_scan'}
                 <label class="form-control">
-                  <span class="label-text">Input Range (Vpp, optional)</span>
-                  <input type="number" step="0.5" class="input input-bordered"
-                    bind:value={newScan.input_range_vpp} />
+                  <span class="label-text">DC Offset ({newScan.dc_offset_mv} mV)</span>
+                  <input type="range" class="range range-primary range-sm"
+                    min={-dcOffsetHalfScaleMv(digitizerBoardModel(newScan.digitizer_id))}
+                    max={dcOffsetHalfScaleMv(digitizerBoardModel(newScan.digitizer_id))}
+                    step="1" bind:value={newScan.dc_offset_mv} />
+                  <input type="number" step="1" class="input input-sm input-bordered mt-1"
+                    bind:value={newScan.dc_offset_mv} />
                 </label>
               {/if}
             </div>

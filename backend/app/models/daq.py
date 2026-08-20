@@ -25,7 +25,7 @@ class DAQConfigResponse(SQLModel):
     number_of_triggers: Optional[int] = None
     record_length: Optional[int] = None
     post_trigger_size: Optional[int] = None
-    input_range_vpp: Optional[float] = None
+    dc_offset: Optional[int] = None
     channels: Optional[List] = None
     created_at: datetime
 
@@ -45,7 +45,7 @@ class RunCreateRequest(SQLModel):
     number_of_triggers: Optional[int] = None
     record_length: Optional[int] = None
     post_trigger_size: Optional[int] = None
-    input_range_vpp: Optional[float] = None
+    dc_offset: Optional[int] = None
     channels: Optional[List] = None
     label: Optional[str] = None
     comments: Optional[str] = None
@@ -100,7 +100,7 @@ class DAQConfiguration(SQLModel, table=True):
     number_of_triggers: Optional[int] = Field(default=None)
     record_length: Optional[int] = Field(default=None)
     post_trigger_size: Optional[int] = Field(default=None)
-    input_range_vpp: Optional[float] = Field(default=None)
+    dc_offset: Optional[int] = Field(default=None)
     channels: Optional[List] = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(
         default_factory=_utcnow,

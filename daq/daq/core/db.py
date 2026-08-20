@@ -70,7 +70,7 @@ class DAQConfigurationDB(SQLModel, table=True):
     number_of_triggers: Optional[int] = Field(default=None)
     record_length: Optional[int] = Field(default=None)
     post_trigger_size: Optional[int] = Field(default=None)
-    input_range_vpp: Optional[float] = Field(default=None)
+    dc_offset: Optional[int] = Field(default=None)
     channels: Optional[List] = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

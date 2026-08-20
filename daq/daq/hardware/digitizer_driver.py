@@ -218,7 +218,6 @@ class DigitizerDriver(ABC):
     def __init__(self, info):
         self.info = info
         self.enabled_channels: list[int] = []
-        self.input_range_vpp: Optional[float] = None
         self.calibrated = False
         self.drs4_time: Optional[list[float]] = None
         self.correction_tables: list[dict] = []
@@ -268,6 +267,14 @@ class DigitizerDriver(ABC):
             if not 0 <= percent <= 100:
                 errors.append(
                     f"post_trigger_size must be a percentage 0-100, got {post}"
+                )
+
+        offset = cfg.get("dc_offset")
+        if offset is not None:
+            code = int(offset)
+            if not 0 <= code <= 0xFFFF:
+                errors.append(
+                    f"dc_offset must be a 16-bit DAC value 0-65535, got {offset}"
                 )
 
         for ch in cfg.get("channels", []):
@@ -486,6 +493,11 @@ class X742Driver(DigitizerDriver):
                 self._caen_call(dev.set_group_dc_offset, g, int(item["dc_offset"]))
             if "fast_trigger_threshold" in item:
                 self._caen_call(dev.set_group_fast_trigger_threshold, g, int(item["fast_trigger_threshold"]))
+        offset = cfg.get("dc_offset")
+        if offset is not None:
+            code = int(offset)
+            for g in range(self.n_groups):
+                self._caen_call(dev.set_group_dc_offset, g, code)
         if cfg.get("fast_trigger_mode") is not None:
             self._caen_call(dev.set_fast_trigger_mode, TriggerMode(cfg["fast_trigger_mode"]))
         if cfg.get("fast_trigger_digitizing") is not None:
@@ -566,6 +578,11 @@ class X743Driver(DigitizerDriver):
                 self._caen_call(dev.set_channel_dc_offset, ch, int(dc_offsets[ch]))
             if ch in thresholds:
                 self._caen_call(dev.set_channel_trigger_threshold, ch, int(thresholds[ch]))
+        offset = cfg.get("dc_offset")
+        if offset is not None:
+            code = int(offset)
+            for ch in self.enabled_channels:
+                self._caen_call(dev.set_channel_dc_offset, ch, code)
         if cfg.get("self_trigger"):
             mask = sum(1 << ch for ch in self.enabled_channels)
             self._caen_call(dev.set_channel_self_trigger, TriggerMode.ACQ_ONLY, mask)

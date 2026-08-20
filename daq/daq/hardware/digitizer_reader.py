@@ -18,8 +18,17 @@ from caen_libs.caendigitizer import (
     TriggerMode,
 )
 
+from caen_libs._caendigitizertypes import BoardModel
+
 from .digitizer_driver import DigitizerDriver, build_driver
 from .digitizer_interface import open_device
+
+#: Full-scale input range per board model, fixed by hardware (still written to
+#: the output metadata for the analyst even though it is not configurable).
+_FIXED_INPUT_RANGE_VPP = {
+    BoardModel.DT5742: 1.0,
+    BoardModel.DT5743: 2.5,
+}
 
 # Read out with a slave-terminated MBLT cycle, exactly like CAEN's
 # ReadoutTest sample. Never read on an empty FIFO (an MBLT read with no
@@ -45,8 +54,8 @@ class DigitizerScanner:
 
     Waveforms are voltage-calibrated where the hardware supports it (DRS4 boards
     with firmware correction; otherwise a linear counts->volts conversion using
-    ``input_range_vpp``). Per HV point a ROOT file ``digitizer_point_{i}.root`` is
-    written via uproot.
+    the board's fixed full-scale input range). Per HV point a ROOT file
+    ``digitizer_point_{i}.root`` is written via uproot.
     """
 
     def __init__(self, digitizer_row):
@@ -63,6 +72,7 @@ class DigitizerScanner:
         self.enabled_channels: list[int] = []
         self.record_length = 0
         self.input_range_vpp: Optional[float] = None
+        self.dc_offset: Optional[int] = None
         self.calibrated = False
         self.drs4_time: Optional[list[float]] = None
 
@@ -200,8 +210,8 @@ class DigitizerScanner:
         self._trace("get_record_length")
         self.record_length = self._attempt(dev.get_record_length) or 0
 
-        driver.input_range_vpp = float(cfg["input_range_vpp"]) if cfg.get("input_range_vpp") else None
-        self.input_range_vpp = driver.input_range_vpp
+        self.input_range_vpp = _FIXED_INPUT_RANGE_VPP.get(self.info.model, 0.0)
+        self.dc_offset = int(cfg["dc_offset"]) if cfg.get("dc_offset") is not None else None
         self.calibrated = driver.calibrated
         self.drs4_time = driver.drs4_time
 
@@ -517,6 +527,7 @@ class DigitizerScanner:
             "trigger_mode": self._mode,
             "number_of_triggers": int(self._target),
             "input_range_vpp": float(self.input_range_vpp or 0.0),
+            "dc_offset": int(self.dc_offset or 0),
             "calibrated": 1 if self.calibrated else 0,
             "connection_type": int(self.connection_type),
             "link_used": str(self.arg),

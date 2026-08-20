@@ -34,7 +34,7 @@
     number_of_triggers: number | null;
     record_length: number | null;
     post_trigger_size: number | null;
-    input_range_vpp: number | null;
+    dc_offset: number | null;
     channels: DigitizerChannel[] | null;
     created_at: string;
   }
@@ -84,7 +84,7 @@
   let editNumberOfTriggers = $state<number>(100);
   let editRecordLength = $state<number>(1024);
   let editPostTriggerSize = $state<number>(50);
-  let editInputRangeVpp = $state<number | null>(null);
+  let editDcOffsetMv = $state(0);
   let editChannels = $state<DigitizerChannel[]>([]);
   let editVoltagePoints = $state<{ slot: number; channel: number; voltage: number }[][]>([]);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -139,7 +139,9 @@
       editNumberOfTriggers = data.number_of_triggers ?? 100;
       editRecordLength = data.record_length ?? 1024;
       editPostTriggerSize = data.post_trigger_size ?? 0;
-      editInputRangeVpp = data.input_range_vpp ?? null;
+      editDcOffsetMv = data.dc_offset != null
+        ? dcOffsetCodeToMv(data.dc_offset, digitizerBoardModel(editDigitizerId))
+        : 0;
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
         : (data.type === 'digitizer_scan' ? defaultChannels() : []);
@@ -167,8 +169,22 @@
     return 8;
   }
 
-  function supportsInputRange(board_model: number): boolean {
-    return board_model === 27; // DT5743 only; DT5742 has a fixed input range
+  // DC-offset half-scale in mV per board: DT5742 (18) -> +/-0.5 V, DT5743 (27) -> +/-1.25 V.
+  // DAC code 0x8000 == 0 V (default center); code = 0x8000 + mv/half_scale * 0x8000.
+  const DC_OFFSET_HALF_SCALE_MV: Record<number, number> = { 18: 500, 27: 1250 };
+
+  function dcOffsetHalfScaleMv(boardModel: number): number {
+    return DC_OFFSET_HALF_SCALE_MV[boardModel] ?? 625;
+  }
+
+  function dcOffsetMvToCode(mv: number, boardModel: number): number {
+    const half = dcOffsetHalfScaleMv(boardModel);
+    return Math.max(0, Math.min(0xffff, Math.round(0x8000 + (mv / half) * 0x8000)));
+  }
+
+  function dcOffsetCodeToMv(code: number, boardModel: number): number {
+    const half = dcOffsetHalfScaleMv(boardModel);
+    return Math.round(((code - 0x8000) * half) / 0x8000);
   }
 
   // Valid sampling frequencies per board model (DT5742 DRS4: 5/2.5/1/0.75 GS/s,
@@ -216,7 +232,6 @@
     editDigitizerId = id;
     editSamplingFrequencyHz = defaultSamplingHz(digitizerBoardModel(id));
     editChannels = defaultChannels();
-    if (!supportsInputRange(digitizerBoardModel(id))) editInputRangeVpp = null;
   }
 
   function toggleEditChannel(ch: DigitizerChannel) {
@@ -397,7 +412,7 @@
             number_of_triggers: editNumberOfTriggers,
             record_length: editRecordLength,
             post_trigger_size: editPostTriggerSize,
-            input_range_vpp: editInputRangeVpp,
+            dc_offset_mv: editDcOffsetMv,
             channels: editChannels,
           }
         : {}),
@@ -428,7 +443,7 @@
         editNumberOfTriggers = parsed.number_of_triggers ?? editNumberOfTriggers;
         editRecordLength = parsed.record_length ?? editRecordLength;
         editPostTriggerSize = parsed.post_trigger_size ?? editPostTriggerSize;
-        editInputRangeVpp = parsed.input_range_vpp ?? editInputRangeVpp;
+        editDcOffsetMv = parsed.dc_offset_mv ?? editDcOffsetMv;
         if (parsed.channels) editChannels = parsed.channels;
         if (editScanType === 'digitizer_scan' && editChannels.length === 0) {
           editChannels = defaultChannels();
@@ -480,7 +495,9 @@
         number_of_triggers: editScanType === 'digitizer_scan' ? editNumberOfTriggers : null,
         record_length: editScanType === 'digitizer_scan' ? editRecordLength : null,
         post_trigger_size: editScanType === 'digitizer_scan' ? editPostTriggerSize : null,
-        input_range_vpp: editScanType === 'digitizer_scan' ? editInputRangeVpp : null,
+        dc_offset: editScanType === 'digitizer_scan'
+          ? dcOffsetMvToCode(editDcOffsetMv, digitizerBoardModel(editDigitizerId))
+          : null,
         channels: editScanType === 'digitizer_scan' ? editChannels : null,
       };
       const { data } = await api.put(`/daq/configs/${config.id}`, body);
@@ -496,7 +513,9 @@
       editNumberOfTriggers = data.number_of_triggers ?? 100;
       editRecordLength = data.record_length ?? 1024;
       editPostTriggerSize = data.post_trigger_size ?? 0;
-      editInputRangeVpp = data.input_range_vpp ?? null;
+      editDcOffsetMv = data.dc_offset != null
+        ? dcOffsetCodeToMv(data.dc_offset, digitizerBoardModel(editDigitizerId))
+        : 0;
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
         : (data.type === 'digitizer_scan' ? defaultChannels() : []);
@@ -761,11 +780,15 @@
                       <input type="number" min="0" max="100" step="1" class="input input-bordered"
                         bind:value={editPostTriggerSize} />
                     </label>
-{#if supportsInputRange(digitizerBoardModel(editDigitizerId))}
+{#if editScanType === 'digitizer_scan'}
                       <label class="form-control flex flex-col">
-                        <span class="label-text">Input Range (Vpp, optional)</span>
-                        <input type="number" step="0.5" class="input input-bordered"
-                          bind:value={editInputRangeVpp} />
+                        <span class="label-text">DC Offset ({editDcOffsetMv} mV)</span>
+                        <input type="range" class="range range-primary range-sm"
+                          min={-dcOffsetHalfScaleMv(digitizerBoardModel(editDigitizerId))}
+                          max={dcOffsetHalfScaleMv(digitizerBoardModel(editDigitizerId))}
+                          step="1" bind:value={editDcOffsetMv} />
+                        <input type="number" step="1" class="input input-sm input-bordered mt-1"
+                          bind:value={editDcOffsetMv} />
                       </label>
                     {/if}
                   </div>

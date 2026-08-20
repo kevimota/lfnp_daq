@@ -78,7 +78,7 @@ def update_configuration(config_id: int, req: RunCreateRequest, session: Session
     config.number_of_triggers = req.number_of_triggers
     config.record_length = req.record_length
     config.post_trigger_size = req.post_trigger_size
-    config.input_range_vpp = req.input_range_vpp
+    config.dc_offset = req.dc_offset
     config.channels = req.channels
     session.add(config)
     session.commit()
@@ -266,7 +266,7 @@ def create_run(req: RunCreateRequest, session: SessionDep):
         number_of_triggers=req.number_of_triggers,
         record_length=req.record_length,
         post_trigger_size=req.post_trigger_size,
-        input_range_vpp=req.input_range_vpp,
+        dc_offset=req.dc_offset,
         channels=req.channels,
     )
     session.add(config)

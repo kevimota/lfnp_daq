@@ -77,7 +77,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--channels", default=None,
                    help="comma-separated enabled channels, e.g. '0,1'. "
                         "Default: all channels.")
-    p.add_argument("--input-range-vpp", type=float, default=None)
+    p.add_argument("--dc-offset-mv", type=float, default=None,
+                   help="DC offset baseline in mV applied to all channels/groups "
+                        "(0 = mid-scale, + full-scale depends on the board; "
+                        "center 0 mV = DAC 0x8000). Omitted -> do not touch the DAC.")
     p.add_argument("--output", default=None,
                    help="output directory (default: a temp dir under /tmp)")
     p.add_argument("--timeout", type=float, default=None,
@@ -142,7 +145,6 @@ async def main(argv: list[str] | None = None) -> int:
         "number_of_triggers": args.target,
         "post_trigger_size": args.post_trigger,
         "channels": _channels(args.channels),
-        "input_range_vpp": args.input_range_vpp,
     }
     if args.sampling_frequency_hz is not None:
         cfg["sampling_frequency_hz"] = args.sampling_frequency_hz
@@ -154,6 +156,12 @@ async def main(argv: list[str] | None = None) -> int:
         _LOG.info("board: %s model=%s channels(from info)=%s drs4=%s sam=%s",
                   scanner.info.model_name, int(scanner.info.model),
                   getattr(scanner.info, "channels", "?"), scanner.is_drs4, scanner.is_sam)
+
+        if args.dc_offset_mv is not None:
+            half_scale_mv = {18: 500.0, 27: 1250.0}.get(int(scanner.info.model), 625.0)
+            code = int(round(0x8000 + args.dc_offset_mv / half_scale_mv * 0x8000))
+            cfg["dc_offset"] = max(0, min(0xFFFF, code))
+            _LOG.info("DC offset %+.0f mV -> DAC code 0x%04X", args.dc_offset_mv, cfg["dc_offset"])
 
         await scanner.configure(cfg)
         _LOG.info("configured: enabled=%s record_length=%s calibrated=%s",
