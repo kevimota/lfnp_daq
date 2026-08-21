@@ -3,10 +3,11 @@
 Each board family gets its own driver so the divergent behaviour is isolated
 from the acquisition orchestration in DigitizerScanner:
 
-* DT5742 (X742 family, DRS4 sampling chip): group-based configuration
-  (``set_group_enable_mask``, ``set_group_dc_offset``, fast-trigger TR0),
-  DRS4 sampling/correction API, ``set_post_trigger_size`` (global, percent),
-  X742Event decode.
+* DT5742 (X742 family, DRS4 sampling chip): group enable mask +
+  per-channel DC offset (``set_group_enable_mask``, ``set_channel_dc_offset``;
+  the hardware rejects ``set_group_dc_offset`` with FUNCTION_NOT_ALLOWED),
+  fast-trigger TR0, DRS4 sampling/correction API,
+  ``set_post_trigger_size`` (global, percent), X742Event decode.
 * DT5743 (X743 family, SAMLONG sampling chip): per-channel configuration
   (``set_channel_enable_mask``, ``set_channel_dc_offset``,
   ``set_channel_self_trigger``), SAM sampling/correction API,
@@ -483,21 +484,26 @@ class X742Driver(DigitizerDriver):
         return waveforms
 
     def configure_triggers(self, dev, cfg: dict) -> None:
-        """Optional DRS4 fast-trigger / group DC-offset settings (applied only
-        when the config provides them)."""
+        """Optional DRS4 fast-trigger / per-channel DC-offset settings (applied
+        only when the config provides them). The DT5742 rejects
+        ``set_group_dc_offset`` with FUNCTION_NOT_ALLOWED (verified on hardware),
+        so the DC offset is written per physical channel instead."""
         for item in cfg.get("groups", []):
             g = int(item["group"])
             if not 0 <= g < self.n_groups:
                 raise ValueError(f"DT5742: group {g} out of range (0..{self.n_groups - 1})")
             if "dc_offset" in item:
-                self._caen_call(dev.set_group_dc_offset, g, int(item["dc_offset"]))
+                code = int(item["dc_offset"])
+                for ch in self.enabled_channels:
+                    if g * self.channels_per_group <= ch < (g + 1) * self.channels_per_group:
+                        self._caen_call(dev.set_channel_dc_offset, ch, code)
             if "fast_trigger_threshold" in item:
                 self._caen_call(dev.set_group_fast_trigger_threshold, g, int(item["fast_trigger_threshold"]))
         offset = cfg.get("dc_offset")
         if offset is not None:
             code = int(offset)
-            for g in range(self.n_groups):
-                self._caen_call(dev.set_group_dc_offset, g, code)
+            for ch in self.enabled_channels:
+                self._caen_call(dev.set_channel_dc_offset, ch, code)
         if cfg.get("fast_trigger_mode") is not None:
             self._caen_call(dev.set_fast_trigger_mode, TriggerMode(cfg["fast_trigger_mode"]))
         if cfg.get("fast_trigger_digitizing") is not None:
