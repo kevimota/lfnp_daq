@@ -82,15 +82,9 @@ services:
       target: dev
     ports:
       - "8001:8001"
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-      - /dev/a2818_0:/dev/a2818_0
-      - /dev/a3818_0:/dev/a3818_0
-      - /dev/v1718_0:/dev/v1718_0
-      - /dev/v1718_1:/dev/v1718_1
     privileged: true
     volumes:
-      - /dev/usb:/dev/usb
+      - /dev:/dev
       - ./daq:/daq
       - daq-data:/data/daq/raw
       - /run/udev:/run/udev:ro
