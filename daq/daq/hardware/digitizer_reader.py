@@ -214,6 +214,7 @@ class DigitizerScanner:
         self.dc_offset = int(cfg["dc_offset"]) if cfg.get("dc_offset") is not None else None
         self.calibrated = driver.calibrated
         self.drs4_time = driver.drs4_time
+        self.sampling_frequency_hz = float(self.driver._resolved_frequency_hz or 0.0)
 
         self._trace("malloc_readout_buffer")
         readout_size = dev.malloc_readout_buffer()
@@ -528,6 +529,9 @@ class DigitizerScanner:
             "number_of_triggers": int(self._target),
             "input_range_vpp": float(self.input_range_vpp or 0.0),
             "dc_offset": int(self.dc_offset or 0),
+            "sampling_frequency_hz": float(self.sampling_frequency_hz or 0.0),
+            "dc_offset_v": ((float(self.dc_offset) - 0x8000) / 0x8000 * (self.input_range_vpp / 2))
+            if self.dc_offset is not None else 0.0,
             "calibrated": 1 if self.calibrated else 0,
             "connection_type": int(self.connection_type),
             "link_used": str(self.arg),

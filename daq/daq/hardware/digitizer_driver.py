@@ -344,6 +344,7 @@ class DigitizerDriver(ABC):
         enable mask, post-trigger size, sampling frequency/calibration and any
         optional trigger/offset settings."""
         self.validate_config(cfg)
+        self._resolved_frequency_hz = self._resolve_frequency_hz(cfg)
         mask = self._channel_mask(cfg)
         self.set_enable_mask(dev, mask)
         self.configure_post_trigger(dev, cfg)
