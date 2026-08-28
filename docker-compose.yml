@@ -5,7 +5,7 @@ services:
     ports:
       - 5432:5432
     volumes:
-      - postgresql-data:/var/lib/postgresql/data
+      - ./postgresql-data:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
@@ -86,7 +86,7 @@ services:
     volumes:
       - /dev:/dev
       - ./daq:/daq
-      - daq-data:/data/daq/raw
+      - ./daq-data:/data/daq/
       - /run/udev:/run/udev:ro
     depends_on:
       - postgresql
@@ -101,14 +101,11 @@ services:
       target: prod
     ports:
       - "8001:8001"
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-    #  - /dev/a2818_0:/dev/a2818_0
-    #  - /dev/a3818_0:/dev/a3818_0
-      - /dev/usb:/dev/usb
     privileged: true
     volumes:
-      - daq-data:/data/daq/raw
+      - /dev:/dev
+      - ./daq:/daq
+      - ./daq-data:/data/daq/
       - /run/udev:/run/udev:ro
     depends_on:
       - postgresql
@@ -118,11 +115,5 @@ services:
       - .env
 
 volumes:
-  postgresql-data:
-    driver: local
-    name: postgresql-data
   frontend_node_modules:
   frontend_svelte_kit:
-  daq-data:
-    driver: local
-    name: daq-data
