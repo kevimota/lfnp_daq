@@ -74,7 +74,6 @@ class DigitizerScanner:
         self.input_range_vpp: Optional[float] = None
         self.dc_offset: Optional[int] = None
         self.calibrated = False
-        self.drs4_time: Optional[list[float]] = None
 
         # CAEN calls are synchronous and can block for a long time (optical/USB
         # I/O, decode, ROOT writes). Run them on a dedicated single worker thread
@@ -118,7 +117,13 @@ class DigitizerScanner:
         return asyncio.get_running_loop().run_in_executor(self._executor, fn, *args)
 
     def _do_open(self):
-        self._trace("open_digitizer2", self.connection_type, self.arg, self.conet_node, self.vme_base_address)
+        self._trace(
+            "open_digitizer2",
+            self.connection_type,
+            self.arg,
+            self.conet_node,
+            self.vme_base_address,
+        )
         dev = open_device(
             self.connection_type,
             self.arg,
@@ -155,7 +160,9 @@ class DigitizerScanner:
     def _do_close(self):
         if self.device is not None:
             try:
-                self._trace("close_digitizer (free_event + free_readout_buffer + close)")
+                self._trace(
+                    "close_digitizer (free_event + free_readout_buffer + close)"
+                )
                 self.device.close()
             finally:
                 self.device = None
@@ -211,9 +218,10 @@ class DigitizerScanner:
         self.record_length = self._attempt(dev.get_record_length) or 0
 
         self.input_range_vpp = _FIXED_INPUT_RANGE_VPP.get(self.info.model, 0.0)
-        self.dc_offset = int(cfg["dc_offset"]) if cfg.get("dc_offset") is not None else None
+        self.dc_offset = (
+            int(cfg["dc_offset"]) if cfg.get("dc_offset") is not None else None
+        )
         self.calibrated = driver.calibrated
-        self.drs4_time = driver.drs4_time
         self.sampling_frequency_hz = float(self.driver._resolved_frequency_hz or 0.0)
 
         self._trace("malloc_readout_buffer")
@@ -253,7 +261,14 @@ class DigitizerScanner:
 
     # ── per-point acquisition ───────────────────────────────────
 
-    def _do_begin_point(self, run_dir: str, point_index: int, cfg: dict, hv_channels: list[dict], run_id: int):
+    def _do_begin_point(
+        self,
+        run_dir: str,
+        point_index: int,
+        cfg: dict,
+        hv_channels: list[dict],
+        run_id: int,
+    ):
         self._run_dir = run_dir
         self._point_index = point_index
         self._run_id = run_id
@@ -261,7 +276,9 @@ class DigitizerScanner:
         self._target = int(cfg.get("number_of_triggers", 0))
         self._mode = cfg.get("trigger_mode", "random")
         freq = float(cfg.get("trigger_frequency_hz", 1.0))
-        self._sw_interval = (1.0 / freq) if (self._mode == "random" and freq > 0) else None
+        self._sw_interval = (
+            (1.0 / freq) if (self._mode == "random" and freq > 0) else None
+        )
 
         self._events = []
         self._timestamps = []
@@ -298,8 +315,17 @@ class DigitizerScanner:
             self._sw_interval,
         )
 
-    async def begin_point(self, run_dir: str, point_index: int, cfg: dict, hv_channels: list[dict], run_id: int):
-        return await self._run(self._do_begin_point, run_dir, point_index, cfg, hv_channels, run_id)
+    async def begin_point(
+        self,
+        run_dir: str,
+        point_index: int,
+        cfg: dict,
+        hv_channels: list[dict],
+        run_id: int,
+    ):
+        return await self._run(
+            self._do_begin_point, run_dir, point_index, cfg, hv_channels, run_id
+        )
 
     def _do_step(self) -> dict:
         dev = self.device
@@ -530,8 +556,11 @@ class DigitizerScanner:
             "input_range_vpp": float(self.input_range_vpp or 0.0),
             "dc_offset": int(self.dc_offset or 0),
             "sampling_frequency_hz": float(self.sampling_frequency_hz or 0.0),
-            "dc_offset_v": ((float(self.dc_offset) - 0x8000) / 0x8000 * (self.input_range_vpp / 2))
-            if self.dc_offset is not None else 0.0,
+            "dc_offset_v": (
+                ((float(self.dc_offset) - 0x8000) / 0x8000 * (self.input_range_vpp / 2))
+                if self.dc_offset is not None
+                else 0.0
+            ),
             "calibrated": 1 if self.calibrated else 0,
             "connection_type": int(self.connection_type),
             "link_used": str(self.arg),
@@ -540,8 +569,6 @@ class DigitizerScanner:
             meta_fields["hv_slot"] = [int(c["slot"]) for c in self._hv_channels]
             meta_fields["hv_channel"] = [int(c["channel"]) for c in self._hv_channels]
             meta_fields["hv_voltage"] = [float(c["voltage"]) for c in self._hv_channels]
-        if self.drs4_time:
-            meta_fields["drs4_time"] = [float(t) for t in self.drs4_time]
 
         meta = ak.Array([meta_fields])
 
