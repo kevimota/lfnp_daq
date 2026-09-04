@@ -5,6 +5,7 @@ import os
 import time
 from datetime import datetime, UTC
 from typing import Callable, Optional
+from copy import deepcopy
 
 import numpy as np
 import awkward as ak
@@ -425,7 +426,7 @@ class DigitizerScanner:
             self._peaks.append(scalars["peak"])
             self._baselines.append(scalars["baseline"])
             self._charges.append(scalars["charge"])
-            self._waveforms.append(waveforms)
+            self._waveforms.append(deepcopy(waveforms))
             self._collected += 1
             if self._target > 0 and self._collected >= self._target:
                 break
