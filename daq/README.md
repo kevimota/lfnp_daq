@@ -104,6 +104,54 @@ Requires `libcaenhvwrapper.so` installed to `/usr/lib64` and `libssl1.1` (Debian
 
 `LD_LIBRARY_PATH=/usr/lib64` is set in the Docker image so the linker finds the CAEN C library.
 
+### USB access to devices (digitizers & power supplies)
+
+Direct USB connections (desktop digitizers like DT5742/DT5743, USB power supplies) are handled **in user space** via `libusb` by the CAEN libraries. No kernel driver is required.
+
+Inside the container this works through the device mapping declared in `docker-compose.yml`:
+
+```yaml
+daq-dev:
+  devices:
+    - /dev/bus/usb:/dev/bus/usb
+  privileged: true
+```
+
+- `/dev/bus/usb` lets the container enumerate the host USB bus (libusb).
+- `privileged: true` grants the container access to those device nodes.
+
+### CAENUSBdrvB (VME bridges only — host OS)
+
+`CAENUSBdrvB` is a **Linux kernel driver** (DKMS module). It is **only** needed for USB VME bridges (A2818, A3818, V1718) that open kernel-created device nodes (`/dev/a2818_0`, `/dev/a3818_0`, `/dev/usb/v1718_0`).
+
+It **cannot** be built or loaded inside the Docker container: containers share the host kernel, and DKMS requires the exact host kernel headers plus `modprobe` into the host. It is therefore intentionally excluded from `install_CAEN.sh`.
+
+To use a VME bridge, install the driver **on the host OS** once:
+
+```bash
+# On the host machine the VME bridge USB is plugged into
+sudo apt install dkms build-essential linux-headers-$(uname -r)
+cd caen-libs/CAENUSBdrvB-v1.6.2
+sudo ./install.sh          # builds, installs, and loads the module
+ls /dev/a2818_0 /dev/a3818_0 /dev/usb/v1718_0   # device nodes now present
+```
+
+Then expose the resulting device nodes to the container in `docker-compose.yml`:
+
+```yaml
+daq-dev:
+  devices:
+    - /dev/bus/usb:/dev/bus/usb
+    - /dev/a2818_0:/dev/a2818_0
+    - /dev/a3818_0:/dev/a3818_0
+    - /dev/usb:/dev/usb
+  privileged: true
+```
+
+A VME digitizer is then configured with connection type `USB` or `OPTICAL_LINK` plus its `vme_base_address` in the hardware page.
+
+> Note: PCIe VME bridges (A5818) require PCI passthrough and are not covered by the USB setup above.
+
 ## Data Storage
 
 All data written to `/data/daq/raw/run_{run_id}/`:

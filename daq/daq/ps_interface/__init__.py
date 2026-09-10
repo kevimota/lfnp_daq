@@ -1,1 +1,0 @@
-from .caen_ps_interface import CaenPSInterface

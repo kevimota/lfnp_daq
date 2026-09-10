@@ -1,7 +1,15 @@
+import logging
+import os
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import router as daq_router, scan_manager
+from .api import router as daq_router, scan_manager
+
+logging.basicConfig(
+    level=os.getenv("DAQ_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI(title="DAQ System")
 

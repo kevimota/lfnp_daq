@@ -1,0 +1,156 @@
+import asyncio
+import logging
+import time
+from datetime import datetime, UTC
+
+from ..core.fsm import DAQFSM, DAQState
+from ..hardware import DigitizerScanner
+from .current_scan import CurrentScanner
+
+_LOG = logging.getLogger("daq.scan")
+
+
+class DigitizerScan(CurrentScanner):
+    """HV scan that also acquires digitizer waveforms during the RECORDING phase.
+
+    The record phase is trigger-driven: it lasts until the configured number of
+    triggers/waveforms is captured (or a safety timeout), while power data keeps
+    being sampled on the sample interval during that window.
+    """
+
+    def __init__(
+        self,
+        fsm: DAQFSM,
+        power_interface,
+        data_writer,
+        broadcaster,
+        digitizer: DigitizerScanner,
+    ):
+        super().__init__(fsm, power_interface, data_writer, broadcaster)
+        self.digitizer = digitizer
+
+    async def run_current_scan(self, config: dict, run_id: int) -> dict:
+        return await super().run_current_scan(config, run_id)
+
+    async def _prepare(self, config: dict, run_id: int):
+        await self.digitizer.open()
+        driver = self.digitizer.driver
+        _LOG.info(
+            "run=%s: digitizer board %s (model=%s, %s groups x %s channels = %s total, "
+            "drs4=%s sam=%s)",
+            run_id,
+            getattr(self.digitizer.info, "model_name", "?"),
+            int(driver.model),
+            driver.n_groups,
+            driver.channels_per_group,
+            driver.n_total,
+            driver.drs4,
+            driver.sam,
+        )
+        await self.digitizer.configure(config)
+
+    async def _cleanup(self):
+        await self.digitizer.close()
+
+    async def _record_point(self, run_dir: str, point_index: int, point_config: list, config: dict):
+        sample_interval = config.get("sample_interval_seconds", 1)
+
+        all_channels = list({(ch["slot"], ch["channel"]) for ch in point_config})
+        channel_list = [{"slot": s, "channel": c} for s, c in all_channels]
+
+        target = int(config.get("number_of_triggers", 0))
+        run_id = self.fsm.run_id or 0
+
+        self.data_writer.start_point_data(run_dir, point_index)
+        self.fsm.to_recording()
+        await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
+
+        samples_recorded = 0
+        last_sample_time = None
+        done = target <= 0
+
+        point_started = time.monotonic()
+        _LV_LOG_SECONDS = 5.0
+        _STALL_LOG_SECONDS = 30.0
+
+        async def _liveness():
+            cnt = self.digitizer.collected
+            changed_at = point_started
+            while not self._stop_requested:
+                await asyncio.sleep(_LV_LOG_SECONDS)
+                new_cnt = self.digitizer.collected
+                now = time.monotonic()
+                if new_cnt != cnt:
+                    cnt = new_cnt
+                    changed_at = now
+                stale = now - changed_at
+                _LOG.info(
+                    "run=%s point=%s: waiting… collected=%s/%s elapsed=%.0fs",
+                    run_id,
+                    point_index,
+                    cnt,
+                    target,
+                    now - point_started,
+                )
+                if stale > _STALL_LOG_SECONDS and self.fsm.state == DAQState.RECORDING:
+                    _LOG.warning(
+                        "run=%s point=%s: no new events for %.0fs "
+                        "(collected=%s/%s) - send_sw_trigger/read_data likely blocked",
+                        run_id,
+                        point_index,
+                        stale,
+                        cnt,
+                        target,
+                    )
+
+        liveness = asyncio.create_task(_liveness())
+        try:
+            while not done and not self._stop_requested:
+                while self.fsm.state == DAQState.PAUSED and not self._stop_requested:
+                    await asyncio.sleep(0.5)
+                if self._stop_requested:
+                    break
+
+                if self.fsm.state != DAQState.RECORDING:
+                    # Resumed: redo the current point from scratch.
+                    self.data_writer.start_point_data(run_dir, point_index)
+                    self.fsm.to_recording()
+                    samples_recorded = 0
+                    last_sample_time = None
+                    await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
+
+                now = time.monotonic()
+                if last_sample_time is None or now - last_sample_time >= sample_interval:
+                    readings = self.power.read_all_channels(channel_list)
+
+                    for reading in readings:
+                        self.data_writer.write_power_data(reading, run_dir, point_index)
+
+                    await self.broadcaster.broadcast({
+                        "type": "current_scan",
+                        "point": point_index + 1,
+                        "data": readings,
+                        "digi_triggers": self.digitizer.collected,
+                        "digi_target": target,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    })
+
+                    samples_recorded += 1
+                    last_sample_time = now
+
+                progress = await self.digitizer.step()
+                done = target > 0 and progress["collected"] >= target
+                if done:
+                    _LOG.info(
+                        "run=%s point=%s: target reached (%s/%s triggers)",
+                        self.fsm.run_id,
+                        point_index,
+                        progress["collected"],
+                        target,
+                    )
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            liveness.cancel()
+            await asyncio.gather(liveness, return_exceptions=True)
+            await self.digitizer.end_point()

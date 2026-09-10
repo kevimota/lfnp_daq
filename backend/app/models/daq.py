@@ -18,16 +18,35 @@ class DAQConfigResponse(SQLModel):
     number_of_samples: int
     end_voltage: int
     power_supply: Optional[int]
+    digitizer_id: Optional[int] = None
+    trigger_mode: Optional[str] = None
+    trigger_frequency_hz: Optional[float] = None
+    sampling_frequency_hz: Optional[float] = None
+    number_of_triggers: Optional[int] = None
+    record_length: Optional[int] = None
+    post_trigger_size: Optional[int] = None
+    dc_offset: Optional[int] = None
+    channels: Optional[List] = None
     created_at: datetime
 
 
 class RunCreateRequest(SQLModel):
+    type: str = "hv_scan"
     voltage_points: List = []
     wait_time_seconds: int
     sample_interval_seconds: float
     number_of_samples: int = 60
     end_voltage: int = 0
     power_supply: Optional[int] = None
+    digitizer_id: Optional[int] = None
+    trigger_mode: Optional[str] = None
+    trigger_frequency_hz: Optional[float] = None
+    sampling_frequency_hz: Optional[float] = None
+    number_of_triggers: Optional[int] = None
+    record_length: Optional[int] = None
+    post_trigger_size: Optional[int] = None
+    dc_offset: Optional[int] = None
+    channels: Optional[List] = None
     label: Optional[str] = None
     comments: Optional[str] = None
 
@@ -74,6 +93,15 @@ class DAQConfiguration(SQLModel, table=True):
     number_of_samples: int = Field(default=60)
     end_voltage: int = Field(default=0)
     power_supply: Optional[int] = Field(default=None, foreign_key="caen_ps.id")
+    digitizer_id: Optional[int] = Field(default=None, foreign_key="caen_digitizer.id")
+    trigger_mode: Optional[str] = Field(default=None)
+    trigger_frequency_hz: Optional[float] = Field(default=None)
+    sampling_frequency_hz: Optional[float] = Field(default=None)
+    number_of_triggers: Optional[int] = Field(default=None)
+    record_length: Optional[int] = Field(default=None)
+    post_trigger_size: Optional[int] = Field(default=None)
+    dc_offset: Optional[int] = Field(default=None)
+    channels: Optional[List] = Field(default=None, sa_column=Column(JSONB))
     created_at: datetime = Field(
         default_factory=_utcnow,
         sa_type=DateTime(timezone=True),
