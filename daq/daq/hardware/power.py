@@ -22,6 +22,45 @@ def is_not_present_error(exc: BaseException) -> bool:
     return "not present" in str(exc).lower()
 
 
+#: CAEN HV errors that indicate a connection/session/system problem.  These
+#: are retried (after disconnect + reconnect) instead of aborting a scan.
+_TRANSIENT_HV_CODES = frozenset(
+    {
+        hv.Error.Code.SYSERR,
+        hv.Error.Code.WRITEERR,
+        hv.Error.Code.READERR,
+        hv.Error.Code.TIMEERR,
+        hv.Error.Code.DOWN,
+        hv.Error.Code.NOTPRES,
+        hv.Error.Code.SLOTNOTPRES,
+        hv.Error.Code.NOSERIAL,
+        hv.Error.Code.MEMORYFAULT,
+        hv.Error.Code.SYSCONFCHANGE,
+        hv.Error.Code.NODATA,
+        hv.Error.Code.DEVALREADYOPEN,
+        hv.Error.Code.TOOMANYDEVICEOPEN,
+        hv.Error.Code.SOCKETERROR,
+        hv.Error.Code.COMMUNICATIONERROR,
+        hv.Error.Code.OS,
+        hv.Error.Code.NOTCONNECTED,
+        hv.Error.Code.LOGINFAILED,
+        hv.Error.Code.LOGOUTFAILED,
+    }
+)
+
+
+def is_transient_hv_error(exc: BaseException) -> bool:
+    """Return True for CAEN HV errors that may be cleared by reconnecting.
+
+    Invalid parameters, out-of-range values, wrong credentials and other
+    configuration errors are deliberately not retried: they would never
+    succeed and should fail the scan.
+    """
+    if is_not_present_error(exc):
+        return True
+    return isinstance(exc, hv.Error) and exc.code in _TRANSIENT_HV_CODES
+
+
 class CaenPSInterface:
     """Interface for CAEN power supply control."""
 

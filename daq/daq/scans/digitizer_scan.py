@@ -4,7 +4,7 @@ import time
 from datetime import datetime, UTC
 
 from ..core.fsm import DAQFSM, DAQState
-from ..hardware import DigitizerScanner, is_not_present_error
+from ..hardware import DigitizerScanner
 from .current_scan import CurrentScanner
 
 _LOG = logging.getLogger("daq.scan")
@@ -121,23 +121,10 @@ class DigitizerScan(CurrentScanner):
 
                 now = time.monotonic()
                 if last_sample_time is None or now - last_sample_time >= sample_interval:
-                    try:
-                        readings = self.power.read_all_channels(channel_list)
-                    except Exception as e:
-                        if not is_not_present_error(e):
-                            raise
-                        _LOG.warning(
-                            "run=%s point=%s: CAEN HV not present while "
-                            "recording: %s; skipping sample",
-                            run_id,
-                            point_index + 1,
-                            e,
-                        )
-                        self._log_hv_not_present(
-                            f"CAEN HV not present while recording "
-                            f"(point {point_index + 1}): {e}; skipping sample"
-                        )
-                        self._hv_disconnect()
+                    readings = await self._read_hv_sample(
+                        channel_list, run_id, point_index
+                    )
+                    if readings is None:
                         last_sample_time = now
                     else:
                         for reading in readings:

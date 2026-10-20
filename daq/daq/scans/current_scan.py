@@ -1,18 +1,19 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, UTC
 
 from ..core.fsm import DAQFSM, DAQState
 from ..core.data_writer import DataWriter
 from ..core.websocket import DataBroadcaster
-from ..hardware import CaenPSInterface, is_not_present_error
+from ..hardware import CaenPSInterface, is_transient_hv_error
 
 _LOG = logging.getLogger("daq.scan")
 
 
 class CurrentScanner:
-    #: Delay between retries when the CAEN mainframe reports a transient
-    #: "board/slot not present" error.
+    #: Delay between reconnect attempts when the CAEN mainframe reports a
+    #: transient connection/session/system error.
     hv_retry_seconds = 10
     #: Interval between ramp-status polls while configuring a point.
     hv_ramp_poll_seconds = 5
@@ -31,6 +32,7 @@ class CurrentScanner:
         self.data_writer = data_writer
         self.broadcaster = broadcaster
         self._stop_requested = False
+        self._hv_retry_at: float | None = None
 
     async def _wait_for_resume(self):
         while self.fsm.state == DAQState.PAUSED and not self._stop_requested:
@@ -43,15 +45,56 @@ class CurrentScanner:
         except Exception:
             pass
 
-    def _log_hv_not_present(self, message: str) -> None:
-        """Record a not-present warning in the run log (daq.log)."""
+    def _log_hv_warning(self, message: str) -> None:
+        """Record a CAEN HV warning in the run log (daq.log)."""
         self.fsm.log_warning(message)
+
+    def _delay_hv_retry(
+        self, exc: BaseException, run_id: int, point_index: int, action: str
+    ) -> None:
+        """Disconnect and schedule a reconnect attempt after the retry delay."""
+        self._hv_retry_at = time.monotonic() + self.hv_retry_seconds
+        _LOG.warning(
+            "run=%s point=%s: CAEN HV error while %s: %s; "
+            "skipping sample, reconnecting in %ss",
+            run_id,
+            point_index + 1,
+            action,
+            exc,
+            self.hv_retry_seconds,
+        )
+        self._log_hv_warning(
+            f"CAEN HV error while {action} (point {point_index + 1}): {exc}; "
+            f"skipping sample, reconnecting in {self.hv_retry_seconds}s"
+        )
+        self._hv_disconnect()
+
+    async def _read_hv_sample(
+        self, channel_list: list[dict], run_id: int, point_index: int
+    ) -> list[dict] | None:
+        """Read one power sample, reconnecting the mainframe if needed.
+
+        Returns ``None`` when the mainframe is temporarily unavailable; the
+        caller should skip this sample and keep the scan running.
+        """
+        if self._hv_retry_at is not None:
+            if time.monotonic() < self._hv_retry_at:
+                return None
+            self._hv_retry_at = None
+
+        try:
+            return self.power.read_all_channels(channel_list)
+        except Exception as e:
+            if not is_transient_hv_error(e):
+                raise
+            self._delay_hv_retry(e, run_id, point_index, "reading")
+            return None
 
     async def _hv_config_call(
         self, fn, *args, run_id: int, point_index: int, description: str
     ):
-        """Run a configuration-phase HV call, retrying transient not-present
-        errors until it succeeds or the scan is stopped.
+        """Run a configuration-phase HV call, retrying transient errors
+        until it succeeds or the scan is stopped.
 
         Returns the call's result, or None if the scan was stopped.
         """
@@ -59,10 +102,10 @@ class CurrentScanner:
             try:
                 return fn(*args)
             except Exception as e:
-                if not is_not_present_error(e):
+                if not is_transient_hv_error(e):
                     raise
                 _LOG.warning(
-                    "run=%s point=%s: CAEN HV not present while %s: %s; "
+                    "run=%s point=%s: CAEN HV error while %s: %s; "
                     "retrying in %ss",
                     run_id,
                     point_index + 1,
@@ -70,8 +113,8 @@ class CurrentScanner:
                     e,
                     self.hv_retry_seconds,
                 )
-                self._log_hv_not_present(
-                    f"CAEN HV not present while {description} "
+                self._log_hv_warning(
+                    f"CAEN HV error while {description} "
                     f"(point {point_index + 1}): {e}; "
                     f"retrying in {self.hv_retry_seconds}s"
                 )
@@ -84,8 +127,8 @@ class CurrentScanner:
     ) -> bool:
         """Apply the point voltages and wait for the ramp to settle.
 
-        Transient "board not present" errors are retried (re-applying the
-        full configuration) until the board responds or the scan is stopped.
+        Transient CAEN HV errors are retried (re-applying the full
+        configuration) until the mainframe responds or the scan is stopped.
         """
         while not self._stop_requested:
             if not await self._hv_config_call(
@@ -114,18 +157,18 @@ class CurrentScanner:
                             configured = False
                             break
                 except Exception as e:
-                    if not is_not_present_error(e):
+                    if not is_transient_hv_error(e):
                         raise
                     _LOG.warning(
-                        "run=%s point=%s: CAEN HV not present while waiting "
+                        "run=%s point=%s: CAEN HV error while waiting "
                         "for ramp: %s; reconfiguring in %ss",
                         run_id,
                         point_index + 1,
                         e,
                         self.hv_retry_seconds,
                     )
-                    self._log_hv_not_present(
-                        f"CAEN HV not present while waiting for ramp "
+                    self._log_hv_warning(
+                        f"CAEN HV error while waiting for ramp "
                         f"(point {point_index + 1}): {e}; "
                         f"reconfiguring in {self.hv_retry_seconds}s"
                     )
@@ -140,7 +183,7 @@ class CurrentScanner:
     async def _apply_final_state(
         self, point_config: list, end_voltage: float, run_id: int
     ) -> None:
-        """Apply the desired final HV state, retrying transient not-present
+        """Apply the desired final HV state, retrying transient CAEN HV
         errors up to ``hv_cleanup_attempts`` times."""
         for attempt in range(1, self.hv_cleanup_attempts + 1):
             try:
@@ -156,21 +199,21 @@ class CurrentScanner:
                 _LOG.info("run=%s: desired final HV state applied", run_id)
                 return
             except Exception as e:
-                if not is_not_present_error(e):
+                if not is_transient_hv_error(e):
                     _LOG.warning(
                         "run=%s: failed to set final HV state: %s", run_id, e
                     )
                     return
                 _LOG.warning(
-                    "run=%s: CAEN HV not present while setting final state "
+                    "run=%s: CAEN HV error while setting final state "
                     "(attempt %s/%s): %s",
                     run_id,
                     attempt,
                     self.hv_cleanup_attempts,
                     e,
                 )
-                self._log_hv_not_present(
-                    f"CAEN HV not present while setting final state "
+                self._log_hv_warning(
+                    f"CAEN HV error while setting final state "
                     f"(attempt {attempt}/{self.hv_cleanup_attempts}): {e}"
                 )
                 if attempt < self.hv_cleanup_attempts:
@@ -181,7 +224,7 @@ class CurrentScanner:
             run_id,
             self.hv_cleanup_attempts,
         )
-        self._log_hv_not_present(
+        self._log_hv_warning(
             f"could not reach desired final HV state after "
             f"{self.hv_cleanup_attempts} attempts"
         )
@@ -200,6 +243,8 @@ class CurrentScanner:
 
         if not self.fsm.start(config, run_id):
             return {"success": False, "error": "Failed to start scan"}
+
+        self._hv_retry_at = None
 
         try:
             await self._prepare(config, run_id)
@@ -230,7 +275,7 @@ class CurrentScanner:
                 # ── Wait ──
                 self.fsm.to_waiting()
                 if wait_time > 15:
-                    self.power.disconnect()
+                    self._hv_disconnect()
                 waited = 0
                 while waited < wait_time and not self._stop_requested:
                     await asyncio.sleep(1)
@@ -304,23 +349,10 @@ class CurrentScanner:
                 self.fsm.to_recording()
                 samples_recorded = 0
 
-            try:
-                readings = self.power.read_all_channels(channel_list)
-            except Exception as e:
-                if not is_not_present_error(e):
-                    raise
-                _LOG.warning(
-                    "run=%s point=%s: CAEN HV not present while recording: %s; "
-                    "skipping sample",
-                    run_id,
-                    point_index + 1,
-                    e,
-                )
-                self._log_hv_not_present(
-                    f"CAEN HV not present while recording "
-                    f"(point {point_index + 1}): {e}; skipping sample"
-                )
-                self._hv_disconnect()
+            readings = await self._read_hv_sample(
+                channel_list, run_id, point_index
+            )
+            if readings is None:
                 await asyncio.sleep(sample_interval)
                 continue
 
