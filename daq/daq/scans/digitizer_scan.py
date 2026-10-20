@@ -143,8 +143,8 @@ class DigitizerScan(CurrentScanner):
                             "type": "current_scan",
                             "point": point_index + 1,
                             "data": readings,
-                            "digi_triggers": self.digitizer.collected,
-                            "digi_target": target,
+                            "triggers": self.digitizer.collected,
+                            "target": target,
                             "timestamp": datetime.now(UTC).isoformat(),
                         })
 

@@ -66,6 +66,35 @@
     enabled: boolean;
   }
 
+  interface ChannelStatus {
+    is_on: boolean;
+    ramping_up: boolean;
+    ramping_down: boolean;
+    overcurrent: boolean;
+    overvoltage: boolean;
+    undervoltage: boolean;
+    external_trip: boolean;
+    HVMax: boolean;
+  }
+
+  interface ChannelReading {
+    slot: number;
+    channel: number;
+    voltage: number;
+    current: number;
+    status: ChannelStatus;
+    timestamp: string;
+  }
+
+  interface LiveScanMessage {
+    type: 'current_scan';
+    point: number;
+    data: ChannelReading[];
+    triggers?: number;
+    target?: number;
+    timestamp: string;
+  }
+
   let run: ScanRun | null = $state(null);
   let config: DAQConfig | null = $state(null);
   let daqStatus: DAQStatus | null = $state(null);
@@ -90,7 +119,7 @@
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let ws: WebSocket | null = $state(null);
   let wsConnected = $state(false);
-  let liveData: any[] = $state([]);
+  let liveData: LiveScanMessage[] = $state([]);
   let updating = $state(false);
   let runFiles: { name: string; size: number }[] = $state([]);
   let editLabel = $state('');
@@ -98,6 +127,7 @@
   let updatingRun = $state(false);
 
   const runId = $derived(Number(page.params.id));
+  const latestLive = $derived(liveData.at(-1) ?? null);
 
   onMount(async () => {
     await Promise.all([fetchRun(), fetchSupplies(), fetchDigitizers()]);
@@ -299,8 +329,8 @@
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'current_scan') {
-          liveData = [...liveData.slice(-100), msg];
+        if (msg.type === 'current_scan' && Array.isArray(msg.data)) {
+          liveData = [...liveData.slice(-100), msg as LiveScanMessage];
         }
       } catch {}
     };
@@ -320,7 +350,7 @@
       await api.post(`/daq/runs/${runId}/${action}`);
       toast.success(`${action.charAt(0).toUpperCase() + action.slice(1)} successful`);
       await fetchRun();
-      if (action === 'start') { startPolling(); connectWs(); }
+      if (action === 'start') { liveData = []; startPolling(); connectWs(); }
       if (action === 'stop') { await fetchLog(); stopPolling(); disconnectWs(); daqStatus = null; liveData = []; }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || `Failed to ${action}`);
@@ -342,6 +372,26 @@
       failed: 'badge-error',
     };
     return map[state] || 'badge-ghost';
+  }
+
+  function channelState(status: ChannelStatus): { label: string; badgeClass: string } {
+    if (status.overcurrent) return { label: 'Overcurrent', badgeClass: 'badge-error' };
+    if (status.overvoltage) return { label: 'Overvoltage', badgeClass: 'badge-error' };
+    if (status.undervoltage) return { label: 'Undervoltage', badgeClass: 'badge-error' };
+    if (status.external_trip) return { label: 'External trip', badgeClass: 'badge-error' };
+    if (status.HVMax) return { label: 'HV max', badgeClass: 'badge-error' };
+    if (status.ramping_up) return { label: 'Ramping up', badgeClass: 'badge-warning' };
+    if (status.ramping_down) return { label: 'Ramping down', badgeClass: 'badge-warning' };
+    if (status.is_on) return { label: 'On', badgeClass: 'badge-success' };
+    return { label: 'Off', badgeClass: 'badge-ghost' };
+  }
+
+  function formatVoltage(value: number): string {
+    return Number.isFinite(value) ? `${value.toFixed(2)} V` : '—';
+  }
+
+  function formatCurrent(value: number): string {
+    return Number.isFinite(value) ? `${value.toFixed(3)} µA` : '—';
   }
 
   function canControl(state: string | undefined, action: string) {
@@ -639,11 +689,61 @@
         </div>
       </div>
 
-      {#if liveData.length > 0}
+      {#if latestLive}
         <div class="card bg-base-200">
           <div class="card-body">
             <h3 class="card-title">Live Data</h3>
-            <pre class="text-xs bg-base-300 p-3 rounded-box overflow-y-auto max-h-48 font-mono">{JSON.stringify(liveData.slice(-5).map(({ type, point, ...rest }) => rest), null, 2)}</pre>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div class="stat bg-base-300 rounded-box p-4">
+                <div class="stat-title">Point</div>
+                <div class="stat-value text-2xl">{latestLive.point}</div>
+              </div>
+              <div class="stat bg-base-300 rounded-box p-4">
+                <div class="stat-title">Triggers / Target</div>
+                <div class="stat-value text-2xl">
+                  {#if latestLive.triggers !== undefined && latestLive.target !== undefined}
+                    {latestLive.triggers} / {latestLive.target}
+                  {:else}
+                    <span class="text-base-content/50">—</span>
+                  {/if}
+                </div>
+              </div>
+              <div class="stat bg-base-300 rounded-box p-4">
+                <div class="stat-title">Last Update</div>
+                <div class="stat-value text-lg">{new Date(latestLive.timestamp).toLocaleTimeString()}</div>
+              </div>
+            </div>
+
+            {#if latestLive.data.length > 0}
+              <div class="overflow-x-auto">
+                <table class="table table-sm">
+                  <thead>
+                    <tr>
+                      <th>Slot</th>
+                      <th>Channel</th>
+                      <th>Voltage</th>
+                      <th>Current</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each latestLive.data as reading}
+                      {@const state = channelState(reading.status)}
+                      <tr>
+                        <td>{reading.slot}</td>
+                        <td>{reading.channel}</td>
+                        <td class="font-mono">{formatVoltage(reading.voltage)}</td>
+                        <td class="font-mono">{formatCurrent(reading.current)}</td>
+                        <td><span class="badge {state.badgeClass}">{state.label}</span></td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}
+              <div class="text-base-content/50 text-sm py-2">Waiting for live data…</div>
+            {/if}
           </div>
         </div>
       {/if}
