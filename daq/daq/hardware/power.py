@@ -9,11 +9,17 @@ def is_not_present_error(exc: BaseException) -> bool:
     These are normally transient: the mainframe can momentarily report a
     board or channel as unavailable even though the link is healthy, so
     callers may retry instead of aborting the whole scan.
+
+    The CAEN library may return a result code that the Python binding does
+    not recognize (mapped to ``Error.Code.UNKNOWN``) while still reporting
+    "Board not present" in the error text, so fall back to the message.
     """
-    return isinstance(exc, hv.Error) and exc.code in (
+    if isinstance(exc, hv.Error) and exc.code in (
         hv.Error.Code.NOTPRES,
         hv.Error.Code.SLOTNOTPRES,
-    )
+    ):
+        return True
+    return "not present" in str(exc).lower()
 
 
 class CaenPSInterface:
