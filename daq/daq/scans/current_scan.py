@@ -43,6 +43,10 @@ class CurrentScanner:
         except Exception:
             pass
 
+    def _log_hv_not_present(self, message: str) -> None:
+        """Record a not-present warning in the run log (daq.log)."""
+        self.fsm.log_warning(message)
+
     async def _hv_config_call(
         self, fn, *args, run_id: int, point_index: int, description: str
     ):
@@ -65,6 +69,11 @@ class CurrentScanner:
                     description,
                     e,
                     self.hv_retry_seconds,
+                )
+                self._log_hv_not_present(
+                    f"CAEN HV not present while {description} "
+                    f"(point {point_index + 1}): {e}; "
+                    f"retrying in {self.hv_retry_seconds}s"
                 )
                 self._hv_disconnect()
                 await asyncio.sleep(self.hv_retry_seconds)
@@ -115,6 +124,11 @@ class CurrentScanner:
                         e,
                         self.hv_retry_seconds,
                     )
+                    self._log_hv_not_present(
+                        f"CAEN HV not present while waiting for ramp "
+                        f"(point {point_index + 1}): {e}; "
+                        f"reconfiguring in {self.hv_retry_seconds}s"
+                    )
                     self._hv_disconnect()
                     await asyncio.sleep(self.hv_retry_seconds)
                     break
@@ -155,6 +169,10 @@ class CurrentScanner:
                     self.hv_cleanup_attempts,
                     e,
                 )
+                self._log_hv_not_present(
+                    f"CAEN HV not present while setting final state "
+                    f"(attempt {attempt}/{self.hv_cleanup_attempts}): {e}"
+                )
                 if attempt < self.hv_cleanup_attempts:
                     self._hv_disconnect()
                     await asyncio.sleep(self.hv_retry_seconds)
@@ -162,6 +180,10 @@ class CurrentScanner:
             "run=%s: could not reach desired final HV state after %s attempts",
             run_id,
             self.hv_cleanup_attempts,
+        )
+        self._log_hv_not_present(
+            f"could not reach desired final HV state after "
+            f"{self.hv_cleanup_attempts} attempts"
         )
 
     async def run_current_scan(self, config: dict, run_id: int) -> dict:
@@ -293,6 +315,10 @@ class CurrentScanner:
                     run_id,
                     point_index + 1,
                     e,
+                )
+                self._log_hv_not_present(
+                    f"CAEN HV not present while recording "
+                    f"(point {point_index + 1}): {e}; skipping sample"
                 )
                 self._hv_disconnect()
                 await asyncio.sleep(sample_interval)

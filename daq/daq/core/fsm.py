@@ -62,6 +62,25 @@ class DAQFSM:
             self._log_file.write(f"{timestamp} | {event}\n")
             self._log_file.flush()
 
+    def log_warning(self, message: str):
+        """Write a warning to the run log (daq.log).
+
+        Unlike :meth:`log_event`, this also records the warning when the
+        run log has already been closed (e.g. during post-run cleanup).
+        """
+        event = f"WARNING: {message}"
+        if self._log_file:
+            timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+            self._log_file.write(f"{timestamp} | {event}\n")
+            self._log_file.flush()
+            return
+        if not self._run_dir:
+            return
+        os.makedirs(self._run_dir, exist_ok=True)
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        with open(os.path.join(self._run_dir, "daq.log"), "a") as log_file:
+            log_file.write(f"{timestamp} | {event}\n")
+
     def start(self, config: dict, run_id: int) -> bool:
         if self._state != DAQState.HALTED:
             return False

@@ -133,6 +133,10 @@ class DigitizerScan(CurrentScanner):
                             point_index + 1,
                             e,
                         )
+                        self._log_hv_not_present(
+                            f"CAEN HV not present while recording "
+                            f"(point {point_index + 1}): {e}; skipping sample"
+                        )
                         self._hv_disconnect()
                         last_sample_time = now
                     else:
