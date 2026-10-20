@@ -24,7 +24,7 @@
 
   let onGoingScans = $state<any[]>([]);
   let powerSupplies: PowerSupply[] = $state([]);
-  let channelsByPS = $state<Record<number, { slot: number; channel: number; voltage: number }[]>>({});
+  let channelsByPS = $state<Record<number, { slot: number; channel: number }[]>>({});
   let recentRuns: ScanRun[] = $state([]);
   let health = $state<{ backend_status: string; daq_status: string } | null>(null);
   let storage = $state<{ total_bytes: number; used_bytes: number; free_bytes: number; percent_used: number; data_size_bytes: number } | null>(null);
@@ -75,19 +75,27 @@
       const { data } = await api.get('/daq/runs', { params: { per_page: 50 } });
       scans = data.items.filter((r: ScanRun) => r.status === 'running');
     } catch {}
-    const chMap: Record<number, { slot: number; channel: number; voltage: number }[]> = {};
+    const chSets: Record<number, Set<string>> = {};
     for (const scan of scans) {
       try { const resp = await api.get(`/daq/runs/${scan.id}/status`); scan.state = resp.data.state; scan.hv_point = resp.data.hv_point; } catch {}
       try {
         const { data: config } = await api.get(`/daq/configs/${scan.configuration_id}`);
         if (config.power_supply && config.voltage_points) {
-          const allChannels: { slot: number; channel: number; voltage: number }[] = [];
+          const set = (chSets[config.power_supply] ??= new Set<string>());
           for (const point of config.voltage_points) {
-            for (const ch of point) { allChannels.push(ch); }
+            for (const ch of point) { set.add(`${ch.slot}:${ch.channel}`); }
           }
-          chMap[config.power_supply] = [...(chMap[config.power_supply] || []), ...allChannels];
         }
       } catch {}
+    }
+    const chMap: Record<number, { slot: number; channel: number }[]> = {};
+    for (const [psId, keys] of Object.entries(chSets)) {
+      chMap[Number(psId)] = [...keys]
+        .map((key) => {
+          const [slot, channel] = key.split(':').map(Number);
+          return { slot, channel };
+        })
+        .sort((a, b) => a.slot - b.slot || a.channel - b.channel);
     }
     channelsByPS = chMap;
     onGoingScans = scans;
@@ -273,7 +281,7 @@
                 {#if channelsByPS[ps.id]?.length}
                   <div class="flex flex-wrap gap-1 mt-1 ml-6">
                     {#each channelsByPS[ps.id] as ch}
-                      <span class="badge badge-outline badge-xs text-base-content/70">{ch.slot}:{ch.channel} @ {ch.voltage}V</span>
+                      <span class="badge badge-outline badge-xs text-base-content/70">{ch.slot}:{ch.channel}</span>
                     {/each}
                   </div>
                 {:else}
