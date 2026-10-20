@@ -3,6 +3,19 @@ from caen_libs import caenhvwrapper as hv
 from caen_libs._caenhvwrappertypes import SystemType, LinkType
 
 
+def is_not_present_error(exc: BaseException) -> bool:
+    """Return True for CAEN HV "board/slot not present" errors.
+
+    These are normally transient: the mainframe can momentarily report a
+    board or channel as unavailable even though the link is healthy, so
+    callers may retry instead of aborting the whole scan.
+    """
+    return isinstance(exc, hv.Error) and exc.code in (
+        hv.Error.Code.NOTPRES,
+        hv.Error.Code.SLOTNOTPRES,
+    )
+
+
 class CaenPSInterface:
     """Interface for CAEN power supply control."""
 
@@ -28,8 +41,9 @@ class CaenPSInterface:
         )
 
     def disconnect(self):
-        self.device.close()
-        self.device = None
+        if self.device is not None:
+            self.device.close()
+            self.device = None
 
     def is_connected(self) -> bool:
         """Check if connected to the device."""

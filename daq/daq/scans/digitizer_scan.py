@@ -4,7 +4,7 @@ import time
 from datetime import datetime, UTC
 
 from ..core.fsm import DAQFSM, DAQState
-from ..hardware import DigitizerScanner
+from ..hardware import DigitizerScanner, is_not_present_error
 from .current_scan import CurrentScanner
 
 _LOG = logging.getLogger("daq.scan")
@@ -121,22 +121,35 @@ class DigitizerScan(CurrentScanner):
 
                 now = time.monotonic()
                 if last_sample_time is None or now - last_sample_time >= sample_interval:
-                    readings = self.power.read_all_channels(channel_list)
+                    try:
+                        readings = self.power.read_all_channels(channel_list)
+                    except Exception as e:
+                        if not is_not_present_error(e):
+                            raise
+                        _LOG.warning(
+                            "run=%s point=%s: CAEN HV not present while "
+                            "recording: %s; skipping sample",
+                            run_id,
+                            point_index + 1,
+                            e,
+                        )
+                        self._hv_disconnect()
+                        last_sample_time = now
+                    else:
+                        for reading in readings:
+                            self.data_writer.write_power_data(reading, run_dir, point_index)
 
-                    for reading in readings:
-                        self.data_writer.write_power_data(reading, run_dir, point_index)
+                        await self.broadcaster.broadcast({
+                            "type": "current_scan",
+                            "point": point_index + 1,
+                            "data": readings,
+                            "digi_triggers": self.digitizer.collected,
+                            "digi_target": target,
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        })
 
-                    await self.broadcaster.broadcast({
-                        "type": "current_scan",
-                        "point": point_index + 1,
-                        "data": readings,
-                        "digi_triggers": self.digitizer.collected,
-                        "digi_target": target,
-                        "timestamp": datetime.now(UTC).isoformat(),
-                    })
-
-                    samples_recorded += 1
-                    last_sample_time = now
+                        samples_recorded += 1
+                        last_sample_time = now
 
                 progress = await self.digitizer.step()
                 done = target > 0 and progress["collected"] >= target

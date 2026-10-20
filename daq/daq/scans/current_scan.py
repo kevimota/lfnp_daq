@@ -1,13 +1,24 @@
 import asyncio
+import logging
 from datetime import datetime, UTC
 
 from ..core.fsm import DAQFSM, DAQState
 from ..core.data_writer import DataWriter
 from ..core.websocket import DataBroadcaster
-from ..hardware import CaenPSInterface
+from ..hardware import CaenPSInterface, is_not_present_error
+
+_LOG = logging.getLogger("daq.scan")
 
 
 class CurrentScanner:
+    #: Delay between retries when the CAEN mainframe reports a transient
+    #: "board/slot not present" error.
+    hv_retry_seconds = 10
+    #: Interval between ramp-status polls while configuring a point.
+    hv_ramp_poll_seconds = 5
+    #: Number of attempts made to apply the final HV state during cleanup.
+    hv_cleanup_attempts = 3
+
     def __init__(
         self,
         fsm: DAQFSM,
@@ -24,6 +35,134 @@ class CurrentScanner:
     async def _wait_for_resume(self):
         while self.fsm.state == DAQState.PAUSED and not self._stop_requested:
             await asyncio.sleep(0.5)
+
+    def _hv_disconnect(self):
+        """Best-effort HV disconnect; never raises."""
+        try:
+            self.power.disconnect()
+        except Exception:
+            pass
+
+    async def _hv_config_call(
+        self, fn, *args, run_id: int, point_index: int, description: str
+    ):
+        """Run a configuration-phase HV call, retrying transient not-present
+        errors until it succeeds or the scan is stopped.
+
+        Returns the call's result, or None if the scan was stopped.
+        """
+        while not self._stop_requested:
+            try:
+                return fn(*args)
+            except Exception as e:
+                if not is_not_present_error(e):
+                    raise
+                _LOG.warning(
+                    "run=%s point=%s: CAEN HV not present while %s: %s; "
+                    "retrying in %ss",
+                    run_id,
+                    point_index + 1,
+                    description,
+                    e,
+                    self.hv_retry_seconds,
+                )
+                self._hv_disconnect()
+                await asyncio.sleep(self.hv_retry_seconds)
+        return None
+
+    async def _configure_point(
+        self, point_config: list, run_id: int, point_index: int
+    ) -> bool:
+        """Apply the point voltages and wait for the ramp to settle.
+
+        Transient "board not present" errors are retried (re-applying the
+        full configuration) until the board responds or the scan is stopped.
+        """
+        while not self._stop_requested:
+            if not await self._hv_config_call(
+                self.power.set_all_voltages,
+                point_config,
+                run_id=run_id,
+                point_index=point_index,
+                description="configuring voltages",
+            ):
+                return False
+
+            configured = False
+            while not configured and not self._stop_requested:
+                await asyncio.sleep(self.hv_ramp_poll_seconds)
+                if self.fsm.state == DAQState.PAUSED:
+                    await self._wait_for_resume()
+                    if self._stop_requested:
+                        return False
+                    # Re-apply the configuration after resuming.
+                    break
+                try:
+                    configured = True
+                    for item in point_config:
+                        status = self.power.read_status(item["slot"], item["channel"])
+                        if status["ramping_up"] or status["ramping_down"]:
+                            configured = False
+                            break
+                except Exception as e:
+                    if not is_not_present_error(e):
+                        raise
+                    _LOG.warning(
+                        "run=%s point=%s: CAEN HV not present while waiting "
+                        "for ramp: %s; reconfiguring in %ss",
+                        run_id,
+                        point_index + 1,
+                        e,
+                        self.hv_retry_seconds,
+                    )
+                    self._hv_disconnect()
+                    await asyncio.sleep(self.hv_retry_seconds)
+                    break
+
+            if configured:
+                return True
+        return False
+
+    async def _apply_final_state(
+        self, point_config: list, end_voltage: float, run_id: int
+    ) -> None:
+        """Apply the desired final HV state, retrying transient not-present
+        errors up to ``hv_cleanup_attempts`` times."""
+        for attempt in range(1, self.hv_cleanup_attempts + 1):
+            try:
+                if end_voltage < 100:
+                    for item in point_config:
+                        item["voltage"] = 15
+                    self.power.set_all_voltages(point_config)
+                    self.power.power_all_off(point_config)
+                else:
+                    for item in point_config:
+                        item["voltage"] = end_voltage
+                    self.power.set_all_voltages(point_config)
+                _LOG.info("run=%s: desired final HV state applied", run_id)
+                return
+            except Exception as e:
+                if not is_not_present_error(e):
+                    _LOG.warning(
+                        "run=%s: failed to set final HV state: %s", run_id, e
+                    )
+                    return
+                _LOG.warning(
+                    "run=%s: CAEN HV not present while setting final state "
+                    "(attempt %s/%s): %s",
+                    run_id,
+                    attempt,
+                    self.hv_cleanup_attempts,
+                    e,
+                )
+                if attempt < self.hv_cleanup_attempts:
+                    self._hv_disconnect()
+                    await asyncio.sleep(self.hv_retry_seconds)
+        _LOG.warning(
+            "run=%s: could not reach desired final HV state after %s attempts",
+            run_id,
+            self.hv_cleanup_attempts,
+        )
 
     async def run_current_scan(self, config: dict, run_id: int) -> dict:
         voltage_points = config.get("voltage_points", [])
@@ -42,27 +181,26 @@ class CurrentScanner:
 
         try:
             await self._prepare(config, run_id)
-            self.power.power_all_on(voltage_points[0])
+            if not await self._hv_config_call(
+                self.power.power_all_on,
+                voltage_points[0],
+                run_id=run_id,
+                point_index=0,
+                description="powering on channels",
+            ):
+                if self._stop_requested:
+                    return {"success": False, "error": "Stopped by user"}
+                return {"success": False, "error": "Could not power on HV channels"}
 
             for point_index, point_config in enumerate(voltage_points):
                 if self._stop_requested:
                     break
 
                 # ── Configure / ramp ──
-                self.power.set_all_voltages(point_config)
-                configured = False
-                while not configured and not self._stop_requested:
-                    await asyncio.sleep(5)
-                    for item in point_config:
-                        status = self.power.read_status(item["slot"], item["channel"])
-                        if not (status["ramping_up"] or status["ramping_down"]):
-                            configured = True
-                    if self.fsm.state == DAQState.PAUSED:
-                        await self._wait_for_resume()
-                        if self._stop_requested:
-                            break
-                        self.power.set_all_voltages(point_config)
-                        configured = False
+                if not await self._configure_point(point_config, run_id, point_index):
+                    if self._stop_requested:
+                        break
+                    continue
 
                 if self._stop_requested:
                     break
@@ -101,18 +239,15 @@ class CurrentScanner:
             self.fsm.fail(str(e))
             return {"success": False, "error": str(e)}
         finally:
-            await self._cleanup()
+            try:
+                await self._cleanup()
+            except Exception as e:
+                _LOG.warning("run=%s: cleanup failed: %s", run_id, e)
             if voltage_points:
-                if end_voltage < 100:
-                    for item in voltage_points[0]:
-                        item['voltage'] = 15
-                    self.power.set_all_voltages(voltage_points[0])
-                    self.power.power_all_off(voltage_points[0])
-                else:
-                    for item in voltage_points[0]:
-                        item['voltage'] = end_voltage
-                    self.power.set_all_voltages(voltage_points[0])
-            self.power.disconnect()
+                await self._apply_final_state(
+                    voltage_points[0], end_voltage, run_id
+                )
+            self._hv_disconnect()
             self._stop_requested = False
 
     async def _prepare(self, config: dict, run_id: int):
@@ -127,6 +262,7 @@ class CurrentScanner:
         """Sample power data for the current point until number_of_samples is reached."""
         number_of_samples = config.get("number_of_samples", 60)
         sample_interval = config.get("sample_interval_seconds", 1)
+        run_id = self.fsm.run_id or 0
 
         all_channels = list({(ch["slot"], ch["channel"]) for ch in point_config})
         channel_list = [{"slot": s, "channel": c} for s, c in all_channels]
@@ -146,7 +282,21 @@ class CurrentScanner:
                 self.fsm.to_recording()
                 samples_recorded = 0
 
-            readings = self.power.read_all_channels(channel_list)
+            try:
+                readings = self.power.read_all_channels(channel_list)
+            except Exception as e:
+                if not is_not_present_error(e):
+                    raise
+                _LOG.warning(
+                    "run=%s point=%s: CAEN HV not present while recording: %s; "
+                    "skipping sample",
+                    run_id,
+                    point_index + 1,
+                    e,
+                )
+                self._hv_disconnect()
+                await asyncio.sleep(sample_interval)
+                continue
 
             for reading in readings:
                 self.data_writer.write_power_data(reading, run_dir, point_index)
