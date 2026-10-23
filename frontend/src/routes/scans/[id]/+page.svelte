@@ -1,7 +1,19 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
-  import { Play, Square, Pause, PlayIcon, ArrowLeft, Trash2, Code } from '@lucide/svelte';
+  import {
+    Play,
+    Square,
+    Pause,
+    PlayIcon,
+    ArrowLeft,
+    Trash2,
+    Code,
+    ChevronDown,
+    ChevronUp,
+    ListChecks,
+    X,
+  } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
   import { goto } from '$app/navigation';
@@ -95,6 +107,40 @@
     timestamp: string;
   }
 
+  interface PointVoltage {
+    slot: number;
+    channel: number;
+    voltage: number;
+  }
+
+  interface PointProgress {
+    index: number;
+    number: number;
+    status: 'completed' | 'running' | 'failed' | 'pending';
+    started_at: string | null;
+    completed_at: string | null;
+    samples: number | null;
+    triggers: number | null;
+    target: number | null;
+    voltages: PointVoltage[];
+    data_files: string[];
+    file_exists: boolean;
+  }
+
+  interface ScanProgress {
+    run_id: number;
+    status: string;
+    scan_type: string;
+    total_points: number;
+    completed_points: number[];
+    failed_point: number | null;
+    resume_point: number | null;
+    active_point: number | null;
+    fallback_used: boolean;
+    last_run: Record<string, unknown> | null;
+    points: PointProgress[];
+  }
+
   let run: ScanRun | null = $state(null);
   let config: DAQConfig | null = $state(null);
   let daqStatus: DAQStatus | null = $state(null);
@@ -125,13 +171,39 @@
   let editLabel = $state('');
   let editComments = $state('');
   let updatingRun = $state(false);
+  let scanProgress: ScanProgress | null = $state(null);
+  let pointsModalOpen = $state(false);
+  let selectedPoints: number[] = $state([]);
+  let liveOpen = $state(true);
 
   const runId = $derived(Number(page.params.id));
   const latestLive = $derived(liveData.at(-1) ?? null);
+  const completedCount = $derived.by(() =>
+    scanProgress ? scanProgress.completed_points.length : 0,
+  );
+  const totalPointCount = $derived.by(() =>
+    scanProgress
+      ? scanProgress.total_points
+      : config
+        ? config.voltage_points.length
+        : 0,
+  );
+  const resumePoint = $derived.by(() =>
+    scanProgress ? scanProgress.resume_point : null,
+  );
+  const failedPoint = $derived.by(() =>
+    scanProgress ? scanProgress.failed_point : null,
+  );
+  const scanActive = $derived.by(() => run?.status === 'running');
+  const canResume = $derived.by(
+    () =>
+      resumePoint !== null &&
+      (run?.status === 'failed' || run?.status === 'stopped'),
+  );
 
   onMount(async () => {
     await Promise.all([fetchRun(), fetchSupplies(), fetchDigitizers()]);
-    await fetchLog();
+    await Promise.all([fetchLog(), fetchProgress()]);
   });
 
   onDestroy(() => {
@@ -147,6 +219,7 @@
       editComments = data.comments ?? '';
       await Promise.all([fetchConfig(data.configuration_id), fetchFiles()]);
       if (data.status === 'running') {
+        liveOpen = true;
         startPolling();
         connectWs();
       }
@@ -301,13 +374,27 @@
     }
   }
 
+  async function fetchProgress() {
+    try {
+      const { data } = await api.get(`/daq/runs/${runId}/progress`);
+      scanProgress = data;
+    } catch {
+      scanProgress = null;
+    }
+  }
+
   function startPolling() {
     stopPolling();
     pollTimer = setInterval(async () => {
-      await Promise.all([fetchStatus(), fetchLog(), fetchFiles()]);
+      await Promise.all([fetchStatus(), fetchLog(), fetchFiles(), fetchProgress()]);
       if (run) {
         const { data } = await api.get(`/daq/runs/${runId}`);
         run = { ...run, status: data.status };
+        if (data.status !== 'running') {
+          stopPolling();
+          disconnectWs();
+          daqStatus = null;
+        }
       }
     }, 2000);
   }
@@ -350,11 +437,94 @@
       await api.post(`/daq/runs/${runId}/${action}`);
       toast.success(`${action.charAt(0).toUpperCase() + action.slice(1)} successful`);
       await fetchRun();
-      if (action === 'start') { liveData = []; startPolling(); connectWs(); }
-      if (action === 'stop') { await fetchLog(); stopPolling(); disconnectWs(); daqStatus = null; liveData = []; }
+      await fetchProgress();
+      if (action === 'start') {
+        liveData = [];
+        liveOpen = true;
+        startPolling();
+        connectWs();
+      }
+      if (action === 'stop') {
+        await fetchLog();
+        stopPolling();
+        disconnectWs();
+        daqStatus = null;
+      }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || `Failed to ${action}`);
     }
+  }
+
+  function togglePoint(index: number) {
+    if (selectedPoints.includes(index)) {
+      selectedPoints = selectedPoints.filter((i) => i !== index);
+    } else {
+      selectedPoints = [...selectedPoints, index].sort((a, b) => a - b);
+    }
+  }
+
+  function pointBadge(status: PointProgress['status']): string {
+    const map: Record<string, string> = {
+      completed: 'badge-success',
+      running: 'badge-info',
+      failed: 'badge-error',
+      pending: 'badge-ghost',
+    };
+    return map[status] || 'badge-ghost';
+  }
+
+  function formatVoltages(voltages: PointVoltage[], max = 4): string {
+    if (!voltages?.length) return '—';
+    const parts = voltages
+      .slice(0, max)
+      .map((v) => `${v.slot}:${v.channel}=${v.voltage} V`);
+    if (voltages.length > max) parts.push(`+${voltages.length - max} more`);
+    return parts.join(', ');
+  }
+
+  function formatPointCount(point: PointProgress): string {
+    if (point.triggers != null || point.target != null) {
+      return `${point.triggers ?? '—'} / ${point.target ?? '—'}`;
+    }
+    if (point.samples != null) return `${point.samples} samples`;
+    return '—';
+  }
+
+  async function startScanSelection(body: { start_point?: number; points?: number[] }) {
+    try {
+      await api.post(`/daq/runs/${runId}/start`, body);
+      toast.success('Scan started');
+      pointsModalOpen = false;
+      selectedPoints = [];
+      liveData = [];
+      liveOpen = true;
+      await fetchRun();
+      await fetchProgress();
+      startPolling();
+      connectWs();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to start scan');
+    }
+  }
+
+  async function resumeScan() {
+    if (resumePoint === null) return;
+    const pointNumber = resumePoint + 1;
+    if (!confirm(
+      `Redo point ${pointNumber} and continue to the end of the scan? ` +
+      'Existing data for this and subsequent points will be overwritten.',
+    )) return;
+    await startScanSelection({ start_point: resumePoint });
+  }
+
+  async function redoSelected() {
+    if (selectedPoints.length === 0) return;
+    const points = [...selectedPoints].sort((a, b) => a - b);
+    if (!confirm(
+      `Redo ${points.length} selected point(s)? ` +
+      'Their power CSV / digitizer ROOT data will be overwritten.',
+    )) return;
+    await startScanSelection({ points });
   }
 
   function statusBadge(status: string) {
@@ -387,11 +557,11 @@
   }
 
   function formatVoltage(value: number): string {
-    return Number.isFinite(value) ? `${value.toFixed(2)} V` : '—';
+    return Number.isFinite(value) ? `${value.toFixed(0)} V` : '—';
   }
 
   function formatCurrent(value: number): string {
-    return Number.isFinite(value) ? `${value.toFixed(3)} µA` : '—';
+    return Number.isFinite(value) ? `${value.toFixed(2)} µA` : '—';
   }
 
   function canControl(state: string | undefined, action: string) {
@@ -612,40 +782,109 @@
 {:else}
   <div role="tablist" class="tabs tabs-bordered mb-4">
     <button role="tab" class="tab text-lg font-semibold" class:tab-active={activeTab === 'monitor'} onclick={() => activeTab = 'monitor'}>Monitor</button>
+    <button role="tab" class="tab text-lg font-semibold" class:tab-active={activeTab === 'log'} onclick={() => activeTab = 'log'}>Log</button>
     <button role="tab" class="tab text-lg font-semibold" class:tab-active={activeTab === 'edit'} onclick={() => activeTab = 'edit'}>Edit</button>
     <button role="tab" class="tab text-lg font-semibold" class:tab-active={activeTab === 'download'} onclick={() => activeTab = 'download'}>Download</button>
   </div>
 
+  {#if pointsModalOpen}
+    <div class="modal modal-open" role="dialog" aria-modal="true" aria-label="Scan points">
+      <div class="modal-box max-w-5xl">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="text-lg font-bold">Scan points — Run {runId}</h3>
+            <p class="text-sm text-base-content/70">
+              {completedCount}/{totalPointCount} completed
+              {#if failedPoint !== null}· failed at point {failedPoint + 1}{/if}
+            </p>
+          </div>
+          <button class="btn btn-sm btn-circle btn-ghost" aria-label="Close" onclick={() => pointsModalOpen = false}>
+            <X class="size-5" />
+          </button>
+        </div>
+
+        {#if scanProgress}
+          <div class="mt-4 max-h-[60vh] overflow-auto rounded-box border border-base-300">
+            <table class="table table-sm">
+              <thead class="sticky top-0 bg-base-100">
+                <tr>
+                  <th class="w-10"></th>
+                  <th>Point</th>
+                  <th>Status</th>
+                  <th>Voltages</th>
+                  <th>Samples / Triggers</th>
+                  <th>Completed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each scanProgress.points as point}
+                  <tr class:bg-base-200={point.index === scanProgress.active_point}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        class="checkbox checkbox-sm"
+                        checked={selectedPoints.includes(point.index)}
+                        disabled={scanActive}
+                        onchange={() => togglePoint(point.index)}
+                        aria-label={`Select point ${point.number}`}
+                      />
+                    </td>
+                    <td class="font-mono">{point.number}</td>
+                    <td><span class="badge badge-sm {pointBadge(point.status)}">{point.status}</span></td>
+                    <td class="max-w-xs whitespace-normal font-mono text-xs">{formatVoltages(point.voltages)}</td>
+                    <td class="font-mono text-xs">{formatPointCount(point)}</td>
+                    <td class="text-xs">{point.completed_at ? new Date(point.completed_at).toLocaleString() : '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="modal-action flex-wrap">
+            {#if canResume}
+              <button class="btn btn-success" onclick={resumeScan} disabled={scanActive}>
+                Resume from point {(resumePoint ?? 0) + 1}
+              </button>
+            {/if}
+            <button class="btn btn-primary" onclick={redoSelected} disabled={scanActive || selectedPoints.length === 0}>
+              Redo selected ({selectedPoints.length})
+            </button>
+            <button class="btn" onclick={() => pointsModalOpen = false}>Close</button>
+          </div>
+        {:else}
+          <p class="py-6 text-base-content/50">Progress is not available yet.</p>
+        {/if}
+      </div>
+      <button class="modal-backdrop" aria-label="Close" onclick={() => pointsModalOpen = false}></button>
+    </div>
+  {/if}
+
   {#if activeTab === 'monitor'}
     <div class="flex flex-col gap-4">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">Database Status</div>
-          <div class="stat-value"><span class="badge {statusBadge(run.status)} text-lg py-3 px-4">{run.status}</span></div>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-box bg-base-200 px-4 py-3 text-sm">
+        <div class="flex items-center gap-2">
+          <span class="text-base-content/60">DB</span>
+          <span class="badge {statusBadge(run.status)}">{run.status}</span>
         </div>
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">FSM State</div>
-          <div class="stat-value">
-            {#if daqStatus}
-              <span class="badge {fsmBadge(daqStatus.state)} text-lg py-3 px-4">{daqStatus.state}</span>
-            {:else}
-              <span class="text-base-content/50">—</span>
-            {/if}
-          </div>
+        <div class="flex items-center gap-2">
+          <span class="text-base-content/60">FSM</span>
+          {#if daqStatus}
+            <span class="badge {fsmBadge(daqStatus.state)}">{daqStatus.state}</span>
+          {:else}
+            <span class="text-base-content/50">—</span>
+          {/if}
         </div>
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">HV Point</div>
-          <div class="stat-value text-2xl">{daqStatus?.hv_point || '—'}</div>
+        <div class="flex items-center gap-2">
+          <span class="text-base-content/60">Point</span>
+          <span class="font-mono">{daqStatus?.hv_point || '—'}</span>
         </div>
-        <div class="stat bg-base-200 rounded-box p-4">
-          <div class="stat-title">WebSocket</div>
-          <div class="stat-value text-lg">
-            {#if wsConnected}
-              <span class="badge badge-success text-lg py-3 px-4">Connected</span>
-            {:else}
-              <span class="badge badge-ghost text-lg py-3 px-4">Disconnected</span>
-            {/if}
-          </div>
+        <div class="flex items-center gap-2">
+          <span class="text-base-content/60">WebSocket</span>
+          {#if wsConnected}
+            <span class="badge badge-success badge-sm">Connected</span>
+          {:else}
+            <span class="badge badge-ghost badge-sm">Disconnected</span>
+          {/if}
         </div>
       </div>
 
@@ -673,52 +912,83 @@
         </div>
       </div>
 
-      {#if run?.comments}
-        <div class="card bg-base-200">
-          <div class="card-body">
-            <h3 class="card-title">Comments</h3>
-            <p class="text-base whitespace-pre-wrap">{run.comments}</p>
-          </div>
-        </div>
-      {/if}
-
+      <!-- Scan Progress -->
       <div class="card bg-base-200">
-        <div class="card-body">
-          <h3 class="card-title">Log</h3>
-          <pre class="text-xs bg-base-300 p-3 rounded-box overflow-y-auto max-h-96 font-mono whitespace-pre-wrap">{logContent || '(no log entries yet)'}</pre>
+        <div class="card-body gap-2 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <h3 class="card-title text-base">Scan Progress</h3>
+              <span class="text-sm text-base-content/70">{completedCount}/{totalPointCount} completed</span>
+              {#if failedPoint !== null}
+                <span class="badge badge-error badge-sm">failed at {failedPoint + 1}</span>
+              {/if}
+              {#if scanProgress?.active_point != null}
+                <span class="badge badge-info badge-sm">point {scanProgress.active_point + 1}</span>
+              {/if}
+              {#if scanProgress?.fallback_used}
+                <span class="badge badge-ghost badge-sm">from log</span>
+              {/if}
+            </div>
+            <div class="flex flex-wrap gap-2">
+              {#if canResume}
+                <button class="btn btn-sm btn-success" onclick={resumeScan} disabled={scanActive}>
+                  <PlayIcon class="size-4" /> Resume
+                </button>
+              {/if}
+              <button class="btn btn-sm btn-outline" onclick={() => pointsModalOpen = true}>
+                <ListChecks class="size-4" /> Manage points
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="block w-full cursor-pointer"
+            aria-label="Manage scan points"
+            onclick={() => pointsModalOpen = true}
+          >
+            <progress class="progress progress-primary w-full" value={completedCount} max={Math.max(totalPointCount, 1)}></progress>
+          </button>
         </div>
       </div>
 
-      {#if latestLive}
-        <div class="card bg-base-200">
-          <div class="card-body">
-            <h3 class="card-title">Live Data</h3>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="stat bg-base-300 rounded-box p-4">
-                <div class="stat-title">Point</div>
-                <div class="stat-value text-2xl">{latestLive.point}</div>
-              </div>
-              <div class="stat bg-base-300 rounded-box p-4">
-                <div class="stat-title">Triggers / Target</div>
-                <div class="stat-value text-2xl">
-                  {#if latestLive.triggers !== undefined && latestLive.target !== undefined}
-                    {latestLive.triggers} / {latestLive.target}
-                  {:else}
-                    <span class="text-base-content/50">—</span>
-                  {/if}
-                </div>
-              </div>
-              <div class="stat bg-base-300 rounded-box p-4">
-                <div class="stat-title">Last Update</div>
-                <div class="stat-value text-lg">{new Date(latestLive.timestamp).toLocaleTimeString()}</div>
-              </div>
+      <!-- Live Data -->
+      <div class="card bg-base-200">
+        <div class="card-body p-4">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between gap-3 text-left"
+            onclick={() => liveOpen = !liveOpen}
+          >
+            <div class="flex items-center gap-2">
+              <h3 class="card-title text-base">Live Data</h3>
+              {#if latestLive && run?.status === 'running'}
+                <span class="badge badge-success badge-sm">Live</span>
+              {/if}
             </div>
+            <div class="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-sm text-base-content/70">
+              {#if latestLive}
+                <span>Point {latestLive.point}</span>
+                {#if latestLive.triggers !== undefined && latestLive.target !== undefined}
+                  <span>Triggers {latestLive.triggers}/{latestLive.target}</span>
+                {/if}
+                <span>Updated {new Date(latestLive.timestamp).toLocaleTimeString()}</span>
+              {:else}
+                <span>Waiting for live data…</span>
+              {/if}
+              {#if liveOpen}
+                <ChevronUp class="size-5" />
+              {:else}
+                <ChevronDown class="size-5" />
+              {/if}
+            </div>
+          </button>
 
-            {#if latestLive.data.length > 0}
-              <div class="overflow-x-auto">
+          {#if liveOpen}
+            <div class="divider my-2"></div>
+            {#if latestLive && latestLive.data.length > 0}
+              <div class="max-h-96 overflow-x-auto overflow-y-auto rounded-box">
                 <table class="table table-sm">
-                  <thead>
+                  <thead class="sticky top-0 bg-base-200">
                     <tr>
                       <th>Slot</th>
                       <th>Channel</th>
@@ -744,9 +1014,17 @@
             {:else}
               <div class="text-base-content/50 text-sm py-2">Waiting for live data…</div>
             {/if}
-          </div>
+          {/if}
         </div>
-      {/if}
+      </div>
+    </div>
+
+  {:else if activeTab === 'log'}
+    <div class="card bg-base-200">
+      <div class="card-body">
+        <h3 class="card-title">Log</h3>
+        <pre class="text-xs bg-base-300 p-3 rounded-box overflow-y-auto max-h-[70vh] font-mono whitespace-pre-wrap">{logContent || '(no log entries yet)'}</pre>
+      </div>
     </div>
 
   {:else if activeTab === 'edit'}

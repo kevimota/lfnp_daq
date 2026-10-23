@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, UTC
 
@@ -29,8 +30,16 @@ class DigitizerScan(CurrentScanner):
         super().__init__(fsm, power_interface, data_writer, broadcaster)
         self.digitizer = digitizer
 
-    async def run_current_scan(self, config: dict, run_id: int) -> dict:
-        return await super().run_current_scan(config, run_id)
+    async def run_current_scan(
+        self,
+        config: dict,
+        run_id: int,
+        run_points: list[int] | None = None,
+        mode: str = "start",
+    ) -> dict:
+        return await super().run_current_scan(
+            config, run_id, run_points=run_points, mode=mode
+        )
 
     async def _prepare(self, config: dict, run_id: int):
         await self.digitizer.open()
@@ -158,3 +167,19 @@ class DigitizerScan(CurrentScanner):
             liveness.cancel()
             await asyncio.gather(liveness, return_exceptions=True)
             await self.digitizer.end_point()
+
+        root_name = f"digitizer_point_{point_index}.root"
+        csv_name = f"power_data_point_{point_index}.csv"
+        if done and os.path.isfile(os.path.join(run_dir, root_name)):
+            data_files = [root_name]
+            if os.path.isfile(os.path.join(run_dir, csv_name)):
+                data_files.append(csv_name)
+            self.data_writer.mark_point_completed(
+                run_dir,
+                point_index,
+                voltages=point_config,
+                data_files=data_files,
+                samples=samples_recorded,
+                triggers=self.digitizer.collected,
+                target=target,
+            )

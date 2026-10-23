@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, UTC
 
@@ -229,7 +230,13 @@ class CurrentScanner:
             f"{self.hv_cleanup_attempts} attempts"
         )
 
-    async def run_current_scan(self, config: dict, run_id: int) -> dict:
+    async def run_current_scan(
+        self,
+        config: dict,
+        run_id: int,
+        run_points: list[int] | None = None,
+        mode: str = "start",
+    ) -> dict:
         voltage_points = config.get("voltage_points", [])
         wait_time = config.get("wait_time_seconds", 30)
         end_voltage = config.get("end_voltage", 0)
@@ -238,10 +245,26 @@ class CurrentScanner:
             self.fsm.fail("No voltage points defined")
             return {"success": False, "error": "No voltage points defined"}
 
+        total_points = len(voltage_points)
+        if run_points:
+            run_points = sorted({int(i) for i in run_points})
+            if not run_points or run_points[0] < 0 or run_points[-1] >= total_points:
+                self.fsm.fail("Invalid point selection")
+                return {"success": False, "error": "Invalid point selection"}
+        else:
+            run_points = list(range(total_points))
+
         run_dir = self.data_writer.create_run_directory(run_id)
         self.data_writer.write_configuration(config, run_dir)
+        self.data_writer.start_run_progress(
+            run_dir,
+            run_id,
+            run_points,
+            mode=mode,
+            start_point=run_points[0],
+        )
 
-        if not self.fsm.start(config, run_id):
+        if not self.fsm.start(config, run_id, run_points=run_points, mode=mode):
             return {"success": False, "error": "Failed to start scan"}
 
         self._hv_retry_at = None
@@ -250,18 +273,23 @@ class CurrentScanner:
             await self._prepare(config, run_id)
             if not await self._hv_config_call(
                 self.power.power_all_on,
-                voltage_points[0],
+                voltage_points[run_points[0]],
                 run_id=run_id,
-                point_index=0,
+                point_index=run_points[0],
                 description="powering on channels",
             ):
                 if self._stop_requested:
                     return {"success": False, "error": "Stopped by user"}
                 return {"success": False, "error": "Could not power on HV channels"}
 
-            for point_index, point_config in enumerate(voltage_points):
+            for point_index in run_points:
+                point_config = voltage_points[point_index]
                 if self._stop_requested:
                     break
+
+                self.data_writer.start_point_progress(
+                    run_dir, point_index, point_config
+                )
 
                 # ── Configure / ramp ──
                 if not await self._configure_point(point_config, run_id, point_index):
@@ -310,10 +338,32 @@ class CurrentScanner:
                 await self._cleanup()
             except Exception as e:
                 _LOG.warning("run=%s: cleanup failed: %s", run_id, e)
-            if voltage_points:
+            cleanup_channels = []
+            seen = set()
+            for point in voltage_points:
+                for item in point:
+                    key = (int(item["slot"]), int(item["channel"]))
+                    if key not in seen:
+                        seen.add(key)
+                        cleanup_channels.append({
+                            "slot": key[0],
+                            "channel": key[1],
+                            "voltage": end_voltage,
+                        })
+            if cleanup_channels:
                 await self._apply_final_state(
-                    voltage_points[0], end_voltage, run_id
+                    cleanup_channels, end_voltage, run_id
                 )
+            if self.fsm.state == DAQState.FINISHED:
+                result = "finished"
+            elif self._stop_requested:
+                result = "stopped"
+            else:
+                result = "failed"
+            try:
+                self.data_writer.finish_run_progress(run_dir, result)
+            except Exception as e:
+                _LOG.warning("run=%s: failed to write progress manifest: %s", run_id, e)
             self._hv_disconnect()
             self._stop_requested = False
 
@@ -368,6 +418,19 @@ class CurrentScanner:
 
             samples_recorded += 1
             await asyncio.sleep(sample_interval)
+
+        csv_name = f"power_data_point_{point_index}.csv"
+        if (
+            samples_recorded >= number_of_samples
+            and os.path.isfile(os.path.join(run_dir, csv_name))
+        ):
+            self.data_writer.mark_point_completed(
+                run_dir,
+                point_index,
+                voltages=point_config,
+                data_files=[csv_name],
+                samples=samples_recorded,
+            )
 
     def stop(self):
         self._stop_requested = True

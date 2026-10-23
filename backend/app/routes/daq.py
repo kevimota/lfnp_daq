@@ -15,6 +15,7 @@ from ..models.daq import (
     DAQRunResponse,
     PaginatedRunsResponse,
     RunCreateRequest,
+    RunStartRequest,
     RunUpdateRequest,
     RunActionResponse,
 )
@@ -122,7 +123,12 @@ _DIGITIZER_SAMPLING_FREQUENCIES = {
 _DIGITIZER_CHANNEL_COUNTS = {18: 16, 27: 8}
 
 
-async def _proxy_to_daq(run_id: int, action: str, method: str = "POST") -> dict:
+async def _proxy_to_daq(
+    run_id: int,
+    action: str,
+    method: str = "POST",
+    payload: dict | None = None,
+) -> dict:
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/{action}"
     try:
@@ -130,7 +136,7 @@ async def _proxy_to_daq(run_id: int, action: str, method: str = "POST") -> dict:
             if method == "GET":
                 resp = await client.get(url)
             else:
-                resp = await client.post(url)
+                resp = await client.post(url, json=payload)
     except httpx.ReadTimeout:
         raise HTTPException(
             status_code=503,
@@ -366,14 +372,58 @@ def _check_run_exists(run_id: int, session) -> DAQRuns:
     response_model=RunActionResponse,
     dependencies=[Depends(get_current_user)],
 )
-async def start_run(run_id: int, session: SessionDep):
+async def start_run(
+    run_id: int,
+    session: SessionDep,
+    req: RunStartRequest | None = None,
+):
+    req = req or RunStartRequest()
     run = _check_run_exists(run_id, session)
 
     config = session.get(DAQConfiguration, run.configuration_id)
     if not config:
         raise HTTPException(status_code=400, detail="Run has no configuration")
 
-    requested = _extract_channels(config.voltage_points)
+    voltage_points = config.voltage_points or []
+    total_points = len(voltage_points)
+    if total_points == 0:
+        raise HTTPException(
+            status_code=400, detail="Configuration has no voltage points"
+        )
+
+    if req.points is not None:
+        if not req.points:
+            raise HTTPException(status_code=400, detail="points must not be empty")
+        selected_points = sorted({int(i) for i in req.points})
+        if selected_points[0] < 0 or selected_points[-1] >= total_points:
+            raise HTTPException(
+                status_code=400,
+                detail=f"points must be between 0 and {total_points - 1}",
+            )
+        payload = {"points": selected_points}
+        started_message = f"Redo started for {len(selected_points)} point(s)"
+    elif req.start_point is not None:
+        start_point = int(req.start_point)
+        if not 0 <= start_point < total_points:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start_point must be between 0 and {total_points - 1}",
+            )
+        selected_points = list(range(start_point, total_points))
+        payload = {"start_point": start_point}
+        started_message = (
+            f"Resumed from point {start_point + 1}"
+            if start_point > 0
+            else "Scan started"
+        )
+    else:
+        selected_points = list(range(total_points))
+        payload = None
+        started_message = "Scan started"
+
+    requested = _extract_channels(
+        [voltage_points[index] for index in selected_points]
+    )
 
     # Check conflict with other active runs
     active_runs = session.exec(
@@ -427,9 +477,11 @@ async def start_run(run_id: int, session: SessionDep):
             )
 
     try:
-        result = await _proxy_to_daq(run_id, "start")
+        result = await _proxy_to_daq(run_id, "start", payload=payload)
         run.status = "running"
-        run.started_at = datetime.now(UTC)
+        if run.started_at is None:
+            run.started_at = datetime.now(UTC)
+        run.stopped_at = None
         session.add(run)
         session.commit()
     except Exception:
@@ -438,7 +490,11 @@ async def start_run(run_id: int, session: SessionDep):
         session.commit()
         raise
 
-    return RunActionResponse(success=True, run_id=run_id, message="Scan started")
+    return RunActionResponse(
+        success=True,
+        run_id=run_id,
+        message=result.get("message", started_message),
+    )
 
 
 @router.post(
@@ -494,6 +550,12 @@ async def resume_run(run_id: int, session: SessionDep):
 async def get_run_status(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
     return await _proxy_to_daq(run_id, "status", method="GET")
+
+
+@router.get("/runs/{run_id}/progress")
+async def get_run_progress(run_id: int, session: SessionDep):
+    _check_run_exists(run_id, session)
+    return await _proxy_to_daq(run_id, "progress", method="GET")
 
 
 @router.get("/runs/{run_id}/info")

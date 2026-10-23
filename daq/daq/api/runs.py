@@ -1,4 +1,6 @@
 import asyncio
+import os
+import re
 
 from fastapi import APIRouter, HTTPException
 
@@ -7,7 +9,7 @@ from caen_libs._caenhvwrappertypes import SystemType, LinkType
 from ..core.db import get_session, DAQConfigurationDB, CaenPS, CaenDigitizer, DAQRuns
 from ..core.fsm import DAQFSM, DAQState
 from ..core.websocket import DataBroadcaster
-from ..models import DAQStatusResponse
+from ..models import DAQStatusResponse, RunStartRequest
 from ..hardware import CaenPSInterface, DigitizerScanner
 from ..scans import SCAN_TYPES
 from . import ScanContext, data_writer, scan_manager, _background_scan
@@ -71,6 +73,154 @@ def _validate_digitizer_board_specific(config_row, dig_row) -> None:
                 )
 
 
+def _log_fallback_progress(
+    log_path: str, run_id: int, total_points: int
+) -> tuple[set[int], bool]:
+    """Best-effort progress for runs created before the progress manifest."""
+    if not os.path.isfile(log_path):
+        return set(), False
+    try:
+        with open(log_path) as f:
+            text = f.read()
+    except OSError:
+        return set(), False
+
+    marker = f"Run {run_id} started"
+    idx = text.rfind(marker)
+    segment = text[idx:] if idx >= 0 else text
+    if "All points completed" in segment:
+        return set(range(total_points)), True
+
+    candidates = []
+    for pattern in (
+        r"Configuring Point (\d+)",
+        r"Recording started \(point (\d+)\)",
+    ):
+        for match in re.finditer(pattern, segment):
+            candidates.append((match.start(), int(match.group(1)) - 1))
+
+    if not candidates:
+        return set(), True
+
+    _pos, failed_index = max(candidates)
+    if failed_index < 0 or failed_index >= total_points:
+        return set(range(total_points)), True
+    return set(range(failed_index)), True
+
+
+@router.get("/runs/{run_id}/progress")
+async def get_progress(run_id: int):
+    with get_session() as session:
+        run_row = session.get(DAQRuns, run_id)
+        if not run_row:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        config_row = session.get(DAQConfigurationDB, run_row.configuration_id)
+        if not config_row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Configuration not found for run_id {run_id}",
+            )
+
+        voltage_points = config_row.voltage_points or []
+        total_points = len(voltage_points)
+        scan_type = config_row.type or "hv_scan"
+        run_status = run_row.status
+
+        run_dir = os.path.join(data_writer.data_path, f"run_{run_id}")
+        manifest = data_writer.read_progress(run_dir)
+        manifest_points = manifest.get("points") or {}
+        fallback_used = False
+
+        completed: set[int] = set()
+        point_meta: dict[int, dict] = {}
+
+        if manifest.get("last_run") or manifest_points:
+            for index in range(total_points):
+                entry = manifest_points.get(str(index))
+                if not isinstance(entry, dict):
+                    continue
+                point_meta[index] = entry
+                if entry.get("status") == "completed":
+                    completed.add(index)
+        else:
+            completed, fallback_used = _log_fallback_progress(
+                os.path.join(run_dir, "daq.log"), run_id, total_points
+            )
+            for index in completed:
+                point_meta[index] = {"status": "completed"}
+
+        for index in range(total_points):
+            primary = (
+                f"digitizer_point_{index}.root"
+                if scan_type == "digitizer_scan"
+                else f"power_data_point_{index}.csv"
+            )
+            file_exists = os.path.isfile(os.path.join(run_dir, primary))
+            entry = point_meta.setdefault(index, {})
+            entry["file_exists"] = file_exists
+            if index in completed and not file_exists:
+                completed.discard(index)
+                entry["status"] = "missing"
+
+        active_point = None
+        ctx = scan_manager.get(run_id)
+        if ctx is not None:
+            current = ctx.fsm.current_point_index
+            if 0 <= current < total_points:
+                active_point = current
+
+        resume_point = next(
+            (index for index in range(total_points) if index not in completed), None
+        )
+        failed_point = (
+            resume_point if run_status in ("failed", "stopped") else None
+        )
+
+        points = []
+        for index in range(total_points):
+            entry = point_meta.get(index, {})
+            if index in completed:
+                point_status = "completed"
+            elif active_point == index:
+                point_status = "running"
+            elif failed_point == index:
+                point_status = "failed"
+            else:
+                point_status = "pending"
+
+            voltages = entry.get("voltages")
+            if voltages is None and index < len(voltage_points):
+                voltages = voltage_points[index]
+
+            points.append({
+                "index": index,
+                "number": index + 1,
+                "status": point_status,
+                "started_at": entry.get("started_at"),
+                "completed_at": entry.get("completed_at"),
+                "samples": entry.get("samples"),
+                "triggers": entry.get("triggers"),
+                "target": entry.get("target"),
+                "voltages": voltages or [],
+                "data_files": entry.get("data_files") or [],
+                "file_exists": bool(entry.get("file_exists")),
+            })
+
+        return {
+            "run_id": run_id,
+            "status": run_status,
+            "scan_type": scan_type,
+            "total_points": total_points,
+            "completed_points": sorted(completed),
+            "failed_point": failed_point,
+            "resume_point": resume_point,
+            "active_point": active_point,
+            "fallback_used": fallback_used,
+            "last_run": manifest.get("last_run"),
+            "points": points,
+        }
+
+
 @router.get("/runs/{run_id}/status", response_model=DAQStatusResponse)
 async def get_status(run_id: int):
     ctx = scan_manager.get(run_id)
@@ -97,7 +247,8 @@ async def get_info(run_id: int):
 
 
 @router.post("/runs/{run_id}/start")
-async def start_scan(run_id: int):
+async def start_scan(run_id: int, req: RunStartRequest | None = None):
+    req = req or RunStartRequest()
     if run_id in scan_manager:
         ctx = scan_manager[run_id]
         if ctx.fsm.state in (DAQState.HALTED, DAQState.FINISHED, DAQState.FAILED):
@@ -152,6 +303,41 @@ async def start_scan(run_id: int):
             "number_of_samples": config_row.number_of_samples,
             "end_voltage": config_row.end_voltage,
         }
+
+        total_points = len(config["voltage_points"])
+        if total_points == 0:
+            raise HTTPException(
+                status_code=400, detail="Configuration has no voltage points"
+            )
+
+        if req.points is not None:
+            if not req.points:
+                raise HTTPException(
+                    status_code=400, detail="points must not be empty"
+                )
+            run_points = sorted({int(i) for i in req.points})
+            if run_points[0] < 0 or run_points[-1] >= total_points:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"points must be between 0 and {total_points - 1}"
+                    ),
+                )
+            mode = "redo"
+        elif req.start_point is not None:
+            start_point = int(req.start_point)
+            if not 0 <= start_point < total_points:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"start_point must be between 0 and {total_points - 1}"
+                    ),
+                )
+            run_points = list(range(start_point, total_points))
+            mode = "resume" if start_point > 0 else "start"
+        else:
+            run_points = list(range(total_points))
+            mode = "start"
 
         scan_type = config_row.type or "hv_scan"
         if scan_type not in SCAN_TYPES:
@@ -225,7 +411,9 @@ async def start_scan(run_id: int):
         scanner = scanner_cls(fsm, power_interface, data_writer, broadcaster, digitizer=digitizer_scanner)
     else:
         scanner = scanner_cls(fsm, power_interface, data_writer, broadcaster)
-    task = asyncio.create_task(_background_scan(config, run_id, ps_row))
+    task = asyncio.create_task(
+        _background_scan(config, run_id, ps_row, run_points=run_points, mode=mode)
+    )
 
     ctx = ScanContext(
         fsm=fsm,
@@ -236,7 +424,14 @@ async def start_scan(run_id: int):
     )
     scan_manager[run_id] = ctx
 
-    return {"success": True, "run_id": run_id, "message": "Scan started"}
+    if mode == "redo":
+        message = f"Redo started for {len(run_points)} point(s)"
+    elif mode == "resume":
+        message = f"Resumed from point {run_points[0] + 1}"
+    else:
+        message = "Scan started"
+
+    return {"success": True, "run_id": run_id, "message": message}
 
 
 @router.post("/runs/{run_id}/stop")

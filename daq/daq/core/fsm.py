@@ -22,6 +22,8 @@ class DAQFSM:
         self._run_id: Optional[int] = None
         self._run_dir: Optional[str] = None
         self._current_point_index: int = 0
+        self._run_points: list[int] = []
+        self._run_position: int = 0
         self._log_file: Optional[TextIO] = None
         self._data_path = data_path
 
@@ -81,13 +83,22 @@ class DAQFSM:
         with open(os.path.join(self._run_dir, "daq.log"), "a") as log_file:
             log_file.write(f"{timestamp} | {event}\n")
 
-    def start(self, config: dict, run_id: int) -> bool:
+    def start(
+        self,
+        config: dict,
+        run_id: int,
+        run_points: list[int] | None = None,
+        mode: str = "start",
+    ) -> bool:
         if self._state != DAQState.HALTED:
             return False
 
         self._run_id = run_id
         self._configuration = config
-        self._current_point_index = 0
+        total = len(config.get("voltage_points", []))
+        self._run_points = list(run_points) if run_points else list(range(total))
+        self._run_position = 0
+        self._current_point_index = self._run_points[0] if self._run_points else 0
 
         self._run_dir = os.path.join(self._data_path, f"run_{run_id}")
         os.makedirs(self._run_dir, exist_ok=True)
@@ -96,21 +107,34 @@ class DAQFSM:
         self._log_file = open(log_path, "a")
 
         self.log_event(f"Run {run_id} started")
+        if mode == "resume":
+            self.log_event(f"Resuming from point {self._current_point_index + 1}")
+        elif mode == "redo":
+            selected = ", ".join(str(i + 1) for i in self._run_points)
+            self.log_event(f"Redoing points: {selected}")
+        elif self._current_point_index > 0:
+            self.log_event(f"Starting from point {self._current_point_index + 1}")
+
         self._set_state(DAQState.CONFIGURING)
+        self.log_event(f"Configuring Point {self._current_point_index + 1}")
         return True
 
     def configure_next_point(self) -> bool:
         if self._state != DAQState.RECORDING:
             return False
 
-        self._current_point_index += 1
+        self._run_position += 1
 
-        if self._current_point_index >= self.total_points:
+        if self._run_position >= len(self._run_points):
+            full_run = len(self._run_points) == self.total_points
             self._set_state(DAQState.FINISHED)
-            self.log_event("All points completed")
+            self.log_event(
+                "All points completed" if full_run else "Selected points completed"
+            )
             self._close_log()
             return True
 
+        self._current_point_index = self._run_points[self._run_position]
         self.log_event(f"Configuring Point {self._current_point_index + 1}")
         self._set_state(DAQState.CONFIGURING)
         return True
@@ -178,6 +202,8 @@ class DAQFSM:
         self._run_id = None
         self._configuration = None
         self._current_point_index = 0
+        self._run_points = []
+        self._run_position = 0
         self._run_dir = None
 
     def get_info(self) -> dict:

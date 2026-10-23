@@ -41,16 +41,30 @@ scan_manager: dict[int, ScanContext] = {}
 router = APIRouter()
 
 
-async def _background_scan(config: dict, run_id: int, ps_row) -> None:
+async def _background_scan(
+    config: dict,
+    run_id: int,
+    ps_row,
+    run_points: list[int] | None = None,
+    mode: str = "start",
+) -> None:
     """Run scan in background and clean up on completion."""
     ctx = scan_manager.get(run_id)
     if ctx is None:
         return
 
-    _LOG.info("run=%s: background scan started (type=%s)", run_id, config.get("type"))
+    _LOG.info(
+        "run=%s: background scan started (type=%s, mode=%s, points=%s)",
+        run_id,
+        config.get("type"),
+        mode,
+        run_points,
+    )
 
     try:
-        result = await ctx.scanner.run_current_scan(config, run_id)
+        result = await ctx.scanner.run_current_scan(
+            config, run_id, run_points=run_points, mode=mode
+        )
         with get_session() as session:
             run = session.get(DAQRuns, run_id)
             if run:

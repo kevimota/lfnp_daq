@@ -71,6 +71,11 @@ class PaginatedRunsResponse(SQLModel):
     pages: int
 
 
+class RunStartRequest(SQLModel):
+    start_point: Optional[int] = None
+    points: Optional[List[int]] = None
+
+
 class RunUpdateRequest(SQLModel):
     label: Optional[str] = None
     comments: Optional[str] = None
