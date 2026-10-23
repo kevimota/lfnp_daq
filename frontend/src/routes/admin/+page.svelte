@@ -1,9 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Shield, ShieldOff, Pencil, ArrowLeft, Trash2 } from '@lucide/svelte';
+  import {
+    Shield,
+    ShieldOff,
+    Pencil,
+    ArrowLeft,
+    Trash2,
+    UserPlus,
+    KeyRound,
+    Copy,
+    Check,
+  } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
   import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
 
   interface UserAdmin {
     id: string;
@@ -15,29 +26,148 @@
     created_at: string | null;
   }
 
+  interface CreateUserResponse extends UserAdmin {
+    temporary_password: string;
+  }
+
+  interface PasswordResetResponse {
+    message: string;
+    temporary_password: string;
+  }
+
+  interface Credentials {
+    title: string;
+    username: string;
+    password: string;
+  }
+
   let users: UserAdmin[] = $state([]);
   let loading = $state(true);
+
   let showEditModal = $state(false);
   let editingUser = $state<UserAdmin | null>(null);
-  let editForm = $state({ username: '', full_name: '', email: '', is_superuser: false, is_active: true });
+  let editForm = $state({
+    username: '',
+    full_name: '',
+    email: '',
+    is_superuser: false,
+    is_active: true,
+  });
   let saving = $state(false);
 
+  let showCreateModal = $state(false);
+  let creating = $state(false);
+  let createForm = $state({
+    username: '',
+    full_name: '',
+    email: '',
+    is_superuser: false,
+    is_active: true,
+  });
+
+  let resettingUserId = $state<string | null>(null);
+  let credentials = $state<Credentials | null>(null);
+  let copied = $state(false);
+
   onMount(fetchUsers);
+
+  function apiStatus(err: unknown): number | undefined {
+    if (!(err instanceof Object) || !('response' in err)) return undefined;
+    const response = err.response as { status?: number };
+    return response?.status;
+  }
+
+  function formatApiError(err: unknown, fallback: string): string {
+    if (!(err instanceof Object) || !('response' in err)) return fallback;
+    const response = err.response as { data?: { detail?: unknown } };
+    const detail = response?.data?.detail;
+    if (Array.isArray(detail)) {
+      return (
+        detail
+          .map(item => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object' && 'msg' in item) {
+              const msg = item.msg;
+              if (typeof msg === 'string') return msg;
+            }
+            return '';
+          })
+          .filter(Boolean)
+          .join(', ') || fallback
+      );
+    }
+    return typeof detail === 'string' ? detail : fallback;
+  }
 
   async function fetchUsers() {
     loading = true;
     try {
       const { data } = await api.get('/users/');
       users = data.data;
-    } catch (err: any) {
-      if (err.response?.status === 403) {
+    } catch (err) {
+      if (apiStatus(err) === 403) {
         toast.error('Admin access required');
-        goto('/');
+        goto(resolve('/'));
       } else {
         toast.error('Failed to load users');
       }
     } finally {
       loading = false;
+    }
+  }
+
+  function openCreateModal() {
+    createForm = {
+      username: '',
+      full_name: '',
+      email: '',
+      is_superuser: false,
+      is_active: true,
+    };
+    showCreateModal = true;
+  }
+
+  async function createUser() {
+    const username = createForm.username.trim();
+    const email = createForm.email.trim();
+
+    if (!username) {
+      toast.error('Username is required');
+      return;
+    }
+    if (username.length > 30) {
+      toast.error('Username must be 30 characters or fewer');
+      return;
+    }
+    if (!email) {
+      toast.error('Email is required');
+      return;
+    }
+
+    creating = true;
+    try {
+      const { data } = await api.post<CreateUserResponse>('/users/', {
+        username,
+        full_name: createForm.full_name.trim() || null,
+        email,
+        is_superuser: createForm.is_superuser,
+        is_active: createForm.is_active,
+      });
+
+      const { temporary_password, ...newUser } = data;
+      users = [newUser, ...users];
+      showCreateModal = false;
+      credentials = {
+        title: 'User created',
+        username: newUser.username,
+        password: temporary_password,
+      };
+      copied = false;
+      toast.success(`User "${newUser.username}" created`);
+    } catch (err) {
+      toast.error(formatApiError(err, 'Failed to create user'));
+    } finally {
+      creating = false;
     }
   }
 
@@ -57,7 +187,7 @@
     if (!editingUser) return;
     saving = true;
     try {
-      const body: Record<string, any> = {
+      const body = {
         username: editForm.username,
         full_name: editForm.full_name || null,
         email: editForm.email,
@@ -68,11 +198,58 @@
       users = users.map(u => u.id === data.id ? data : u);
       toast.success('User updated');
       showEditModal = false;
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to update user');
+    } catch (err) {
+      toast.error(formatApiError(err, 'Failed to update user'));
     } finally {
       saving = false;
     }
+  }
+
+  async function resetPassword(user: UserAdmin) {
+    if (
+      !confirm(
+        `Reset password for "${user.username}"? Their current password will stop working.`
+      )
+    ) {
+      return;
+    }
+
+    resettingUserId = user.id;
+    try {
+      const { data } = await api.post<PasswordResetResponse>(
+        `/users/${user.id}/reset-password`
+      );
+      credentials = {
+        title: 'Password reset',
+        username: user.username,
+        password: data.temporary_password,
+      };
+      copied = false;
+      toast.success(`Password reset for "${user.username}"`);
+    } catch (err) {
+      toast.error(formatApiError(err, 'Failed to reset password'));
+    } finally {
+      resettingUserId = null;
+    }
+  }
+
+  async function copyPassword() {
+    if (!credentials) return;
+    try {
+      await navigator.clipboard.writeText(credentials.password);
+      copied = true;
+      toast.success('Password copied');
+      setTimeout(() => {
+        copied = false;
+      }, 2000);
+    } catch {
+      toast.error('Copy failed. Select the password manually.');
+    }
+  }
+
+  function closeCredentials() {
+    credentials = null;
+    copied = false;
   }
 
   async function deleteUser(user: UserAdmin) {
@@ -81,20 +258,25 @@
       await api.delete(`/users/${user.id}`);
       users = users.filter(u => u.id !== user.id);
       toast.success(`User "${user.username}" deleted`);
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to delete user');
+    } catch (err) {
+      toast.error(formatApiError(err, 'Failed to delete user'));
     }
   }
 </script>
 
 <div class="flex items-center gap-4 mb-6">
-  <button class="btn btn-ghost btn-sm" onclick={() => goto('/')}><ArrowLeft class="size-5" /></button>
+  <button class="btn btn-ghost btn-sm" onclick={() => goto(resolve('/'))}><ArrowLeft class="size-5" /></button>
   <h1 class="uppercase text-4xl p-2 bg-neutral"><strong>Admin</strong></h1>
 </div>
 
 <div class="card bg-base-200">
   <div class="card-body">
-    <h3 class="card-title mb-2">Users</h3>
+    <div class="flex items-center justify-between gap-3 mb-2">
+      <h3 class="card-title">Users</h3>
+      <button class="btn btn-primary btn-sm" onclick={openCreateModal}>
+        <UserPlus class="size-4" /> Add User
+      </button>
+    </div>
     <div class="overflow-x-auto">
       <table class="table">
     <thead>
@@ -108,7 +290,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each users as user}
+      {#each users as user (user.id)}
         <tr class="hover:bg-base-300">
           <td class="font-medium">{user.username}</td>
           <td>{user.full_name || '-'}</td>
@@ -127,10 +309,33 @@
           </td>
           <td>
             <div class="flex gap-1">
-              <button class="btn btn-ghost btn-sm" onclick={() => openEditModal(user)}>
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick={() => openEditModal(user)}
+                title={`Edit ${user.username}`}
+                aria-label={`Edit ${user.username}`}
+              >
                 <Pencil class="size-4" />
               </button>
-              <button class="btn btn-ghost btn-sm text-error" onclick={() => deleteUser(user)}>
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick={() => resetPassword(user)}
+                disabled={resettingUserId === user.id}
+                title={`Reset password for ${user.username}`}
+                aria-label={`Reset password for ${user.username}`}
+              >
+                {#if resettingUserId === user.id}
+                  <span class="loading loading-spinner loading-xs"></span>
+                {:else}
+                  <KeyRound class="size-4" />
+                {/if}
+              </button>
+              <button
+                class="btn btn-ghost btn-sm text-error"
+                onclick={() => deleteUser(user)}
+                title={`Delete ${user.username}`}
+                aria-label={`Delete ${user.username}`}
+              >
                 <Trash2 class="size-4" />
               </button>
             </div>
@@ -148,6 +353,91 @@
     </div>
   </div>
 </div>
+
+{#if showCreateModal}
+  <div class="modal modal-open">
+    <div class="modal-box max-w-lg">
+      <h3 class="text-2xl font-bold mb-1">Create User</h3>
+      <p class="text-sm text-base-content/60 mb-4">
+        A temporary password will be generated and shown once after creation.
+      </p>
+      <form
+        onsubmit={(e) => {
+          e.preventDefault();
+          createUser();
+        }}
+      >
+        <div class="flex flex-col gap-4">
+          <label class="form-control flex flex-col">
+            <span class="label-text">Username</span>
+            <input
+              type="text"
+              class="input input-bordered"
+              bind:value={createForm.username}
+              maxlength="30"
+              autocomplete="off"
+              required
+            />
+          </label>
+          <label class="form-control flex flex-col">
+            <span class="label-text">Full Name</span>
+            <input
+              type="text"
+              class="input input-bordered"
+              bind:value={createForm.full_name}
+              maxlength="255"
+              autocomplete="off"
+            />
+          </label>
+          <label class="form-control flex flex-col">
+            <span class="label-text">Email</span>
+            <input
+              type="email"
+              class="input input-bordered"
+              bind:value={createForm.email}
+              maxlength="255"
+              autocomplete="off"
+              required
+            />
+          </label>
+          <label class="form-control flex-row items-center gap-3">
+            <input type="checkbox" class="toggle toggle-success" bind:checked={createForm.is_superuser} />
+            <span class="label-text">Administrator</span>
+          </label>
+          <label class="form-control flex-row items-center gap-3">
+            <input
+              type="checkbox"
+              class="toggle"
+              class:toggle-success={createForm.is_active}
+              class:toggle-error={!createForm.is_active}
+              bind:checked={createForm.is_active}
+            />
+            <span class="label-text">Active</span>
+          </label>
+        </div>
+        <div class="modal-action">
+          <button type="button" class="btn" onclick={() => showCreateModal = false} disabled={creating}>
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary" disabled={creating}>
+            {#if creating}
+              <span class="loading loading-spinner loading-sm"></span>
+            {/if}
+            {creating ? 'Creating...' : 'Create User'}
+          </button>
+        </div>
+      </form>
+    </div>
+    <button
+      type="button"
+      class="modal-backdrop"
+      aria-label="Close create user dialog"
+      onclick={() => {
+        if (!creating) showCreateModal = false;
+      }}
+    ></button>
+  </div>
+{/if}
 
 {#if showEditModal && editingUser}
   <div class="modal modal-open">
@@ -182,6 +472,58 @@
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" onclick={() => showEditModal = false}></div>
+    <button
+      type="button"
+      class="modal-backdrop"
+      aria-label="Close edit user dialog"
+      onclick={() => showEditModal = false}
+    ></button>
+  </div>
+{/if}
+
+{#if credentials}
+  <div class="modal modal-open">
+    <div class="modal-box max-w-lg">
+      <h3 class="text-2xl font-bold mb-2">{credentials.title}</h3>
+      <div class="alert alert-warning mb-4">
+        <span>Copy this temporary password now. It will not be shown again.</span>
+      </div>
+      <div class="flex flex-col gap-4">
+        <label class="form-control flex flex-col">
+          <span class="label-text">Username</span>
+          <input type="text" class="input input-bordered" value={credentials.username} readonly />
+        </label>
+        <label class="form-control flex flex-col">
+          <span class="label-text">Temporary Password</span>
+          <div class="join w-full">
+            <input
+              type="text"
+              class="input input-bordered join-item w-full font-mono"
+              value={credentials.password}
+              readonly
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button
+              type="button"
+              class="btn btn-outline join-item"
+              onclick={copyPassword}
+              title="Copy password"
+              aria-label="Copy password"
+            >
+              {#if copied}
+                <Check class="size-4" />
+              {:else}
+                <Copy class="size-4" />
+              {/if}
+            </button>
+          </div>
+        </label>
+      </div>
+      <div class="modal-action">
+        <button class="btn btn-primary" onclick={closeCredentials}>Done</button>
+      </div>
+    </div>
+    <div class="modal-backdrop"></div>
   </div>
 {/if}

@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import HTTPException, APIRouter, Depends, status
+from fastapi import HTTPException, APIRouter, Depends, Response, status
 
 import jwt
 from pydantic import ValidationError
@@ -13,9 +13,11 @@ from ..core.config import config
 from .login import TokenDep
 
 from ..models.auth import (
+    AdminPasswordReset,
+    AdminUserCreate,
+    AdminUserCreateResponse,
     TokenPayload,
     User,
-    UserCreate,
     UserPublic,
     UserUpdate,
     UserUpdateId,
@@ -81,11 +83,15 @@ def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
 
 
 @router.post(
-    "/", dependencies=[Depends(get_current_active_superuser)], response_model=UserPublic
+    "/",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=AdminUserCreateResponse,
 )
-def create_user(session: SessionDep, user_in: UserCreate) -> Any:
+def create_user(
+    session: SessionDep, user_in: AdminUserCreate, response: Response
+) -> Any:
     """
-    Create new user.
+    Create new user with an auto-generated temporary password.
     """
     user = auth.get_user_by_username(session=session, username=user_in.username)
     if user:
@@ -100,9 +106,16 @@ def create_user(session: SessionDep, user_in: UserCreate) -> Any:
             detail="The user with this email already exists in the system.",
         )
 
-    user = auth.create_user(session=session, user_create=user_in)
+    temporary_password = auth.generate_temporary_password()
+    user = auth.create_user_with_password(
+        session=session, user_create=user_in, password=temporary_password
+    )
 
-    return user
+    response.headers["Cache-Control"] = "no-store"
+    public_user = UserPublic.model_validate(user)
+    return AdminUserCreateResponse(
+        **public_user.model_dump(), temporary_password=temporary_password
+    )
 
 
 @router.get("/me", response_model=UserPublic)
@@ -156,6 +169,34 @@ def update_password_me(
     session.add(current_user)
     session.commit()
     return Message(message="Password updated successfully")
+
+
+@router.post(
+    "/{user_id}/reset-password",
+    response_model=AdminPasswordReset,
+    dependencies=[Depends(get_current_active_superuser)],
+)
+def reset_user_password(
+    session: SessionDep, user_id: UUID, response: Response
+) -> Any:
+    """
+    Reset a user's password with an auto-generated temporary password.
+    """
+    db_user = session.get(User, user_id)
+    if not db_user:
+        raise HTTPException(
+            status_code=404,
+            detail="The user with this id does not exist in the system",
+        )
+
+    temporary_password = auth.generate_temporary_password()
+    auth.set_user_password(session, db_user, temporary_password)
+
+    response.headers["Cache-Control"] = "no-store"
+    return AdminPasswordReset(
+        message="Password reset successfully",
+        temporary_password=temporary_password,
+    )
 
 
 @router.get(

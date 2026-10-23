@@ -24,6 +24,10 @@ class UserCreate(UserBase):
     password: str = Field(min_length=8, max_length=128)
 
 
+class AdminUserCreate(UserBase):
+    is_superuser: bool = False
+
+
 class UserRegister(SQLModel):
     email: EmailStr = Field(max_length=255)
     password: str = Field(min_length=8, max_length=128)
@@ -66,9 +70,18 @@ class UserPublic(UserBase):
     created_at: datetime | None = None
 
 
+class AdminUserCreateResponse(UserPublic):
+    temporary_password: str
+
+
 class UsersPublic(SQLModel):
     data: list[UserPublic]
     count: int
+
+
+class AdminPasswordReset(SQLModel):
+    message: str
+    temporary_password: str
 
 
 class Token(SQLModel):

@@ -13,7 +13,9 @@ FastAPI REST API for the LFNP DAQ system. Handles authentication, user managemen
 | PATCH | `/users/me` | Update own profile |
 | PATCH | `/users/me/password` | Change own password |
 | GET | `/users` | List all users (admin) |
+| POST | `/users` | Create user with a generated temporary password (admin) |
 | PATCH | `/users/{id}` | Update any user (admin) |
+| POST | `/users/{id}/reset-password` | Reset password with a generated temporary password (admin) |
 | DELETE | `/users/{id}` | Delete user (admin) |
 
 ### DAQ Runs

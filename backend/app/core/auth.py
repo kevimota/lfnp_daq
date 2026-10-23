@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, UTC
+import secrets
 from typing import Any
 
 from sqlmodel import Session, select
@@ -7,9 +8,31 @@ import jwt
 from pwdlib import PasswordHash
 
 from .config import config
-from ..models.auth import User, UserCreate, UserUpdateId
+from ..models.auth import User, UserBase, UserCreate, UserUpdateId
 
 password_hash = PasswordHash.recommended()
+
+TEMPORARY_PASSWORD_LENGTH = 16
+_PASSWORD_LOWER = "abcdefghijkmnopqrstuvwxyz"
+_PASSWORD_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+_PASSWORD_DIGITS = "23456789"
+_PASSWORD_ALPHABET = _PASSWORD_LOWER + _PASSWORD_UPPER + _PASSWORD_DIGITS
+_PASSWORD_RNG = secrets.SystemRandom()
+
+
+def generate_temporary_password(length: int = TEMPORARY_PASSWORD_LENGTH) -> str:
+    if length < 3:
+        raise ValueError("temporary password length must be at least 3")
+    chars = [
+        _PASSWORD_RNG.choice(_PASSWORD_LOWER),
+        _PASSWORD_RNG.choice(_PASSWORD_UPPER),
+        _PASSWORD_RNG.choice(_PASSWORD_DIGITS),
+    ]
+    chars.extend(
+        _PASSWORD_RNG.choice(_PASSWORD_ALPHABET) for _ in range(length - len(chars))
+    )
+    _PASSWORD_RNG.shuffle(chars)
+    return "".join(chars)
 
 
 def create_access_token(subject: str | Any, expires_delta: timedelta) -> str:
@@ -31,14 +54,28 @@ def get_password_hash(password: str) -> str:
     return password_hash.hash(password)
 
 
-def create_user(session: Session, user_create: UserCreate) -> User:
+def create_user_with_password(
+    session: Session, user_create: UserBase, password: str
+) -> User:
     db_obj = User.model_validate(
-        user_create, update={"hashed_password": get_password_hash(user_create.password)}
+        user_create, update={"hashed_password": get_password_hash(password)}
     )
     session.add(db_obj)
     session.commit()
     session.refresh(db_obj)
     return db_obj
+
+
+def create_user(session: Session, user_create: UserCreate) -> User:
+    return create_user_with_password(session, user_create, user_create.password)
+
+
+def set_user_password(session: Session, db_user: User, password: str) -> User:
+    db_user.hashed_password = get_password_hash(password)
+    session.add(db_user)
+    session.commit()
+    session.refresh(db_user)
+    return db_user
 
 
 def update_user(session: Session, db_user: User, user_in: UserUpdateId) -> Any:

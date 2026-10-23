@@ -522,7 +522,7 @@
     const points = [...selectedPoints].sort((a, b) => a - b);
     if (!confirm(
       `Redo ${points.length} selected point(s)? ` +
-      'Their power CSV / digitizer ROOT data will be overwritten.',
+      'Their recorded data data will be overwritten.',
     )) return;
     await startScanSelection({ points });
   }
