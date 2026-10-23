@@ -233,16 +233,47 @@
     }
   }
 
+  async function copyToClipboard(text: string): Promise<boolean> {
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fall back to the legacy API below.
+      }
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '0';
+    textarea.style.left = '0';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+
+    try {
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
+    }
+  }
+
   async function copyPassword() {
     if (!credentials) return;
-    try {
-      await navigator.clipboard.writeText(credentials.password);
+    if (await copyToClipboard(credentials.password)) {
       copied = true;
       toast.success('Password copied');
       setTimeout(() => {
         copied = false;
       }, 2000);
-    } catch {
+    } else {
       toast.error('Copy failed. Select the password manually.');
     }
   }
