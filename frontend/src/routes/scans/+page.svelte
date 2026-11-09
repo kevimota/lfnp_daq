@@ -594,13 +594,38 @@
                   {/if}
                 </select>
               </label>
-              {#if newScan.trigger_mode === 'random'}
-                <label class="form-control">
-                  <span class="label-text">Trigger Frequency (Hz)</span>
-                  <input type="number" step="0.1" class="input input-bordered"
-                    bind:value={newScan.trigger_frequency_hz} />
-                </label>
+
+              {#if newScan.trigger_mode === 'random' || newScan.trigger_mode === 'random-external' || newScan.trigger_mode === 'random-fast'}
+              <label class="form-control">
+                <span class="label-text">Trigger Frequency (Hz)</span>
+                <input type="number" step="0.1" class="input input-bordered"
+                  bind:value={newScan.trigger_frequency_hz}
+                  max={newScan.trigger_mode === 'random' ? 1000 : 10}
+                />
+              </label>
               {/if}
+
+              {#if newScan.trigger_mode === 'fast' || newScan.trigger_mode === 'random-fast'}
+              <div class="divider divider-primary">Fast Trigger (TR0) Configuration</div>
+              <label class="form-control">
+                <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
+                <select class="select select-bordered" bind:value={newScan.fast_trigger_digitizing}>
+                  <option value={false}>No</option>
+                  <option value={true}>Yes</option>
+                </select>
+              </label>
+              <label class="form-control">
+                <span class="label-text">Fast Trigger Threshold (DAC code, 0-65535)</span>
+                <input type="number" min="0" max="65535" class="input input-bordered"
+                  bind:value={newScan.fast_trigger_threshold} />
+              </label>
+              <label class="form-control">
+                <span class="label-text">Fast Trigger DC Offset (DAC code, 0-65535)</span>
+                <input type="number" min="0" max="65535" class="input input-bordered"
+                  bind:value={newScan.fast_trigger_dc_offset} />
+              </label>
+              {/if}
+
               <label class="form-control">
                 <span class="label-text">Number of Triggers</span>
                 <input type="number" class="input input-bordered"
