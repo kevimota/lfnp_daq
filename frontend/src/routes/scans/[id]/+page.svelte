@@ -1143,33 +1143,38 @@
                     </label>
 
                     {#if editTriggerMode === 'random' || editTriggerMode === 'random-external' || editTriggerMode === 'random-fast'}
-                    <label class="form-control flex flex-col">
-                      <span class="label-text">Trigger Frequency (Hz)</span>
-                      <input type="number" step="0.1" class="input input-bordered"
-                        bind:value={editTriggerFrequencyHz}
-                        max={editTriggerMode === 'random' ? 1000 : 10}
-                      />
-                    </label>
+                    <div class="col-span-2">
+                      <div class="divider divider-primary">Random Trigger</div>
+                      <label class="form-control flex flex-col">
+                        <span class="label-text">Trigger Frequency (Hz)</span>
+                        <input type="number" step="0.1" class="input input-bordered"
+                          bind:value={editTriggerFrequencyHz}
+                          max={editTriggerMode === 'random' ? 1000 : 10}
+                        />
+                      </label>
+                    </div>
                     {/if}
                     {#if editTriggerMode === 'fast' || editTriggerMode === 'random-fast'}
-                    <div class="divider divider-primary">Fast Trigger (TR0) Configuration</div>
-                    <label class="form-control">
-                      <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
-                      <select class="select select-bordered" bind:value={editTriggerModeDigitizing}>
-                        <option value={false}>No</option>
-                        <option value={true}>Yes</option>
-                      </select>
-                    </label>
-                    <label class="form-control">
-                      <span class="label-text">Fast Trigger Threshold (DAC code, 0-65535)</span>
-                      <input type="number" min="0" max="65535" class="input input-bordered"
-                        bind:value={editTriggerModeThreshold} />
-                    </label>
-                    <label class="form-control">
-                      <span class="label-text">Fast Trigger DC Offset (DAC code, 0-65535)</span>
-                      <input type="number" min="0" max="65535" class="input input-bordered"
-                        bind:value={editTriggerModeDcOffset} />
-                    </label>
+                    <div class="col-span-2">
+                      <div class="divider divider-primary">Fast Trigger (TR0) Configuration</div>
+                      <label class="form-control">
+                        <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
+                        <select class="select select-bordered" bind:value={editTriggerModeDigitizing}>
+                          <option value={false}>No</option>
+                          <option value={true}>Yes</option>
+                        </select>
+                      </label>
+                      <label class="form-control">
+                        <span class="label-text">Fast Trigger Threshold (DAC code, 0-65535)</span>
+                        <input type="number" min="0" max="65535" class="input input-bordered"
+                          bind:value={editTriggerModeThreshold} />
+                      </label>
+                      <label class="form-control">
+                        <span class="label-text">Fast Trigger DC Offset (DAC code, 0-65535)</span>
+                        <input type="number" min="0" max="65535" class="input input-bordered"
+                          bind:value={editTriggerModeDcOffset} />
+                      </label>
+                    </div>
                     {/if}
 
                     <label class="form-control flex flex-col">
