@@ -69,7 +69,7 @@
     post_trigger_size: 0,
     dc_offset_mv: 0,
     channels: [] as DigitizerChannel[],
-    fast_trigger_digitizing: false,
+    fast_trigger_digitizing: true,
     fast_trigger_threshold: 0x6666,
     fast_trigger_dc_offset: 0x8000,
   });
@@ -595,46 +595,6 @@
                 </select>
               </label>
 
-              {#if newScan.trigger_mode === 'random' || newScan.trigger_mode === 'random-external' || newScan.trigger_mode === 'random-fast'}
-              <div class="col-span-2">
-                <div class="divider">Random Trigger</div>
-                <div class="grid grid-cols-2 gap-4">
-                  <label class="form-control">
-                    <span class="label-text">Trigger Frequency (Hz)</span>
-                    <input type="number" step="0.1" class="input input-bordered"
-                      bind:value={newScan.trigger_frequency_hz}
-                      max={newScan.trigger_mode === 'random' ? 1000 : 10}
-                    />
-                  </label>
-                </div>
-              </div>
-              {/if}
-
-              {#if newScan.trigger_mode === 'fast' || newScan.trigger_mode === 'random-fast'}
-              <div class="col-span-2">
-                <div class="divider">Fast Trigger (TR0) Configuration</div>
-                <div class="grid grid-cols-2 gap-4">
-                  <label class="form-control w-full">
-                    <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
-                    <select class="select select-bordered" bind:value={newScan.fast_trigger_digitizing}>
-                      <option value={false}>No</option>
-                      <option value={true}>Yes</option>
-                    </select>
-                  </label>
-                  <label class="form-control w-full">
-                    <span class="label-text">Fast Trigger Threshold (DAC code, 0-65535)</span>
-                    <input type="number" min="0" max="65535" class="input input-bordered"
-                      bind:value={newScan.fast_trigger_threshold} />
-                  </label>
-                  <label class="form-control w-full">
-                    <span class="label-text">Fast Trigger DC Offset (DAC code, 0-65535)</span>
-                    <input type="number" min="0" max="65535" class="input input-bordered"
-                      bind:value={newScan.fast_trigger_dc_offset} />
-                  </label>
-                </div>
-              </div>
-              {/if}
-
               <label class="form-control">
                 <span class="label-text">Number of Triggers</span>
                 <input type="number" class="input input-bordered"
@@ -685,7 +645,49 @@
                 {/each}
               </div>
             </div>
+
+            {#if newScan.trigger_mode === 'random' || newScan.trigger_mode === 'random-external' || newScan.trigger_mode === 'random-fast'}
+              <div class="col-span-2">
+                <div class="divider">Random Trigger</div>
+                <div class="grid grid-cols-2 gap-4">
+                  <label class="form-control">
+                    <span class="label-text">Trigger Frequency (Hz)</span>
+                    <input type="number" step="0.1" class="input input-bordered"
+                      bind:value={newScan.trigger_frequency_hz}
+                      max={newScan.trigger_mode === 'random' ? 1000 : 10}
+                    />
+                  </label>
+                </div>
+              </div>
+            {/if}
+
+            {#if newScan.trigger_mode === 'fast' || newScan.trigger_mode === 'random-fast'}
+              <div class="col-span-2">
+                <div class="divider">Fast Trigger (TR0) Configuration</div>
+                <div class="grid grid-cols-2 gap-4">
+                  <label class="form-control w-full">
+                    <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
+                    <select class="select select-bordered" bind:value={newScan.fast_trigger_digitizing}>
+                      <option value={false}>No</option>
+                      <option value={true}>Yes</option>
+                    </select>
+                  </label>
+                  <label class="form-control w-full">
+                    <span class="label-text">Fast Trigger Threshold (DAC code, 0-65535)</span>
+                    <input type="number" min="0" max="65535" class="input input-bordered"
+                      bind:value={newScan.fast_trigger_threshold} />
+                  </label>
+                  <label class="form-control w-full">
+                    <span class="label-text">Fast Trigger DC Offset (DAC code, 0-65535)</span>
+                    <input type="number" min="0" max="65535" class="input input-bordered"
+                      bind:value={newScan.fast_trigger_dc_offset} />
+                  </label>
+                </div>
+              </div>
+            {/if}
           {/if}
+
+          <div class="divider">Power Supply Configuration</div>
 
           <div class="grid grid-cols-2 gap-4">
             <label class="form-control">
