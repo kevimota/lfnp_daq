@@ -3,12 +3,8 @@ from sqlalchemy import DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime, UTC
 from typing import Optional, List
-
-
 def _utcnow() -> datetime:
     return datetime.now(UTC)
-
-
 class DAQConfigResponse(SQLModel):
     id: Optional[int]
     type: str
@@ -28,8 +24,6 @@ class DAQConfigResponse(SQLModel):
     dc_offset: Optional[int] = None
     channels: Optional[List] = None
     created_at: datetime
-
-
 class RunCreateRequest(SQLModel):
     type: str = "hv_scan"
     voltage_points: List = []
@@ -49,8 +43,6 @@ class RunCreateRequest(SQLModel):
     channels: Optional[List] = None
     label: Optional[str] = None
     comments: Optional[str] = None
-
-
 class DAQRunResponse(SQLModel):
     id: Optional[int]
     configuration_id: int
@@ -61,31 +53,22 @@ class DAQRunResponse(SQLModel):
     started_at: Optional[datetime]
     stopped_at: Optional[datetime]
     created_at: datetime
-
-
 class PaginatedRunsResponse(SQLModel):
     items: List[DAQRunResponse]
     total: int
     page: int
     per_page: int
     pages: int
-
-
 class RunStartRequest(SQLModel):
     start_point: Optional[int] = None
     points: Optional[List[int]] = None
-
-
 class RunUpdateRequest(SQLModel):
     label: Optional[str] = None
     comments: Optional[str] = None
-
-
 class RunActionResponse(SQLModel):
     success: bool
     run_id: int
     message: str
-
 
 class DAQConfiguration(SQLModel, table=True):
     __tablename__ = "daq_configuration"
@@ -111,8 +94,6 @@ class DAQConfiguration(SQLModel, table=True):
         default_factory=_utcnow,
         sa_type=DateTime(timezone=True),
     )
-
-
 class DAQRuns(SQLModel, table=True):
     __tablename__ = "daq_runs"
 

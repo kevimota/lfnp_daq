@@ -292,6 +292,7 @@ class X742Driver(DigitizerDriver):
     record_length_configurable = False
     default_frequency_hz = 5_000_000_000
     supported_frequencies_hz = list(_DRS4_FREQUENCIES_BY_HZ)
+    supports_fast_trigger = True
 
     @property
     def n_groups(self) -> int:
@@ -345,15 +346,29 @@ class X742Driver(DigitizerDriver):
         """Optional DRS4 fast-trigger / per-channel DC-offset settings (applied
         only when the config provides them). The DT5742 rejects
         ``set_group_dc_offset`` with FUNCTION_NOT_ALLOWED (verified on hardware),
-        so the DC offset is written per physical channel instead."""
-        for item in cfg.get("groups", []):
-            g = int(item["group"])
-            if not 0 <= g < self.n_groups:
-                raise ValueError(
-                    f"DT5742: group {g} out of range (0..{self.n_groups - 1})"
+        so the DC offset is written per physical channel instead.
+
+        Fast-trigger thresholds come from per-group arrays
+        ``fast_trigger_thresholds`` / ``fast_trigger_dc_offsets`` (one entry per
+        acquisition group). DC offset defaults to ``cfg["dc_offset"]`` when the
+        per-group arrays are absent. ``fast_trigger_digitizing`` toggles TR0
+        digitization (written into data readout, not used as a trigger)."""
+        # Per-group DC offsets and thresholds from arrays
+        fast_thresholds = cfg.get("fast_trigger_thresholds") or []
+        fast_dc_offsets = cfg.get("fast_trigger_dc_offsets") or []
+        n_groups = min(len(fast_thresholds), len(fast_dc_offsets), self.n_groups)
+
+        for g in range(n_groups):
+            thresh = fast_thresholds[g]
+            dc_off = fast_dc_offsets[g]
+            if thresh is not None:
+                self._caen_call(
+                    dev.set_group_fast_trigger_threshold,
+                    g,
+                    int(thresh),
                 )
-            if "dc_offset" in item:
-                code = int(item["dc_offset"])
+            if dc_off is not None:
+                code = int(dc_off)
                 for ch in self.enabled_channels:
                     if (
                         g * self.channels_per_group
@@ -361,21 +376,16 @@ class X742Driver(DigitizerDriver):
                         < (g + 1) * self.channels_per_group
                     ):
                         self._caen_call(dev.set_channel_dc_offset, ch, code)
-            if "fast_trigger_threshold" in item:
-                self._caen_call(
-                    dev.set_group_fast_trigger_threshold,
-                    g,
-                    int(item["fast_trigger_threshold"]),
-                )
+
+        # Fallback: global dc_offset for channels not covered by per-group arrays
         offset = cfg.get("dc_offset")
         if offset is not None:
             code = int(offset)
             for ch in self.enabled_channels:
+                if ch < n_groups * self.channels_per_group:
+                    continue  # already set by per-group array above
                 self._caen_call(dev.set_channel_dc_offset, ch, code)
-        if cfg.get("fast_trigger_mode") is not None:
-            self._caen_call(
-                dev.set_fast_trigger_mode, TriggerMode(cfg["fast_trigger_mode"])
-            )
+
         if cfg.get("fast_trigger_digitizing") is not None:
             self._caen_call(
                 dev.set_fast_trigger_digitizing, EnaDis(cfg["fast_trigger_digitizing"])

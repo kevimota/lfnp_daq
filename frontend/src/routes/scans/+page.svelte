@@ -61,7 +61,7 @@
     power_supply: 1,
     voltage_points: [[{ slot: 0, channel: 0, voltage: 100 }] as ChannelConfig[]],
     digitizer_id: null as number | null,
-    trigger_mode: 'random' as 'random' | 'external',
+    trigger_mode: 'random' as string,
     trigger_frequency_hz: 1,
     sampling_frequency_hz: null as number | null,
     number_of_triggers: 100,
@@ -69,6 +69,9 @@
     post_trigger_size: 0,
     dc_offset_mv: 0,
     channels: [] as DigitizerChannel[],
+    fast_trigger_digitizing: false,
+    fast_trigger_threshold: 0x6666,
+    fast_trigger_dc_offset: 0x8000,
   });
 
   // Valid scan configuration for each supported digitizer board model:
@@ -362,6 +365,9 @@
       post_trigger_size: 0,
       dc_offset_mv: 0,
       channels: [] as DigitizerChannel[],
+      fast_trigger_digitizing: false,
+      fast_trigger_threshold: 0x6666,
+      fast_trigger_dc_offset: 0x8000,
     };
     jsonConfig = '';
     useJsonEditor = false;
@@ -578,6 +584,14 @@
                 <select class="select select-bordered" bind:value={newScan.trigger_mode}>
                   <option value="random">Random (internal)</option>
                   <option value="external">External</option>
+                  {#if digitizerBoardModel(newScan.digitizer_id) === 18}
+                    <option value="fast">Fast (TR0)</option>
+                    <option value="random-external">Random + External</option>
+                    <option value="random-fast">Random + Fast</option>
+                  {/if}
+                  {#if digitizerBoardModel(newScan.digitizer_id) === 27}
+                    <option value="random-external">Random + External</option>
+                  {/if}
                 </select>
               </label>
               {#if newScan.trigger_mode === 'random'}

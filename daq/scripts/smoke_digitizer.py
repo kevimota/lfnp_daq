@@ -59,7 +59,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--conet-node", type=int, default=0)
     p.add_argument("--vme-base-address", type=int, default=0)
 
-    p.add_argument("--mode", choices=["random", "external"], default="random",
+    p.add_argument("--mode", choices=["random", "external", "fast", "random-external", "random-fast"], default="random",
                    help="random: internal periodic software trigger (default); "
                         "external: read the trigger input (needs a hardware signal)")
     p.add_argument("--target", type=int, default=50,

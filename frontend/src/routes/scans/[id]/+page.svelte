@@ -40,7 +40,7 @@
     end_voltage: number;
     power_supply: number | null;
     digitizer_id: number | null;
-    trigger_mode: 'random' | 'external' | null;
+    trigger_mode: string | null;
     trigger_frequency_hz: number | null;
     sampling_frequency_hz: number | null;
     number_of_triggers: number | null;
@@ -153,7 +153,7 @@
   let editJson = $state('');
   let editScanType = $state<'hv_scan' | 'digitizer_scan'>('hv_scan');
   let editDigitizerId = $state<number | null>(null);
-  let editTriggerMode = $state<'random' | 'external'>('random');
+  let editTriggerMode = $state<string>('random');
   let editTriggerFrequencyHz = $state<number>(1);
   let editSamplingFrequencyHz = $state<number | null>(null);
   let editNumberOfTriggers = $state<number>(100);
@@ -1125,6 +1125,14 @@
                       <select class="select select-bordered" bind:value={editTriggerMode}>
                         <option value="random">Random (internal)</option>
                         <option value="external">External</option>
+                        {#if digitizerBoardModel(editDigitizerId) === 18}
+                          <option value="fast">Fast (TR0)</option>
+                          <option value="random-external">Random + External</option>
+                          <option value="random-fast">Random + Fast</option>
+                        {/if}
+                        {#if digitizerBoardModel(editDigitizerId) === 27}
+                          <option value="random-external">Random + External</option>
+                        {/if}
                       </select>
                     </label>
                     {#if editTriggerMode === 'random'}

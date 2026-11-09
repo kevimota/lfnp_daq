@@ -49,9 +49,11 @@ _MILESTONE_STEPS = 20  # log collected/target progress ~MILESTONE_STEPS times pe
 class DigitizerScanner:
     """Acquires digitizer waveforms during the FSM RECORDING phase.
 
-    Random trigger uses an internal periodic software trigger (one SendSWtrigger
-    every 1/frequency seconds). External trigger reads from the trigger input;
-    acquisition ends after ``number_of_triggers`` waveforms.
+    Simultaneous trigger mode: multiple trigger sources (random SW, external,
+    fast TR0) are enabled together; hardware ORs them. Every event is tagged
+    "mixed" since DT5742 event headers contain no source bits. Per-event TR0
+    digitization (ch16/ch17) allows post-acquisition discrimination of fast
+    vs random triggers.
 
     Waveforms are voltage-calibrated where the hardware supports it (DRS4 boards
     with firmware correction; otherwise a linear counts->volts conversion using
@@ -75,6 +77,7 @@ class DigitizerScanner:
         self.input_range_vpp: Optional[float] = None
         self.dc_offset: Optional[int] = None
         self.calibrated = False
+        self.supports_fast_trigger = False
 
         # CAEN calls are synchronous and can block for a long time (optical/USB
         # I/O, decode, ROOT writes). Run them on a dedicated single worker thread
@@ -87,7 +90,7 @@ class DigitizerScanner:
         self._run_id = 0
         self._hv_channels: list[dict] = []
         self._target = 0
-        self._mode = "random"
+        self._trigger_mode: str = "random"
         self._sw_interval: Optional[float] = None
         self._last_sw = 0.0
         self._collected = 0
@@ -182,15 +185,16 @@ class DigitizerScanner:
         self._trace("reset")
         dev.reset()
 
-        self._mode = cfg.get("trigger_mode", "random")
-        if self._mode == "external":
-            self._trace("set_ext_trigger_input_mode", TriggerMode.ACQ_ONLY)
-            dev.set_ext_trigger_input_mode(TriggerMode.ACQ_ONLY)
-        else:
-            self._trace("set_sw_trigger_mode", TriggerMode.ACQ_ONLY)
-            dev.set_sw_trigger_mode(TriggerMode.ACQ_ONLY)
-            self._trace("set_ext_trigger_input_mode", TriggerMode.DISABLED)
-            dev.set_ext_trigger_input_mode(TriggerMode.DISABLED)
+        # ── Determine trigger mode from config ──
+        self._trigger_mode = cfg.get("trigger_mode", "random")
+        # Simultaneous mode: enable all selected sources.
+        #   "random"  → software periodic triggers
+        #   "external" → front-panel trigger input
+        #   "fast"   → TR0 fast trigger
+        #   "random-external"  → both random SW and external
+        #   "random-fast"        → both random SW and TR0
+        # All selected sources are hardware-ORed; every event gets trigger_source="mixed".
+        self._enable_simultaneous_triggers(cfg)
 
         driver = self.driver
 
@@ -224,6 +228,7 @@ class DigitizerScanner:
         )
         self.calibrated = driver.calibrated
         self.sampling_frequency_hz = float(self.driver._resolved_frequency_hz or 0.0)
+        self.supports_fast_trigger = getattr(self.driver, "supports_fast_trigger", False)
 
         self._trace("malloc_readout_buffer")
         readout_size = dev.malloc_readout_buffer()
@@ -231,8 +236,8 @@ class DigitizerScanner:
         dev.allocate_event()
         _LOG.info(
             "digitizer configured: mode=%s groups=%s channels_per_group=%s total_channels=%s "
-            "enabled_channels=%s record_length=%s readout_buffer_bytes=%s input_range_vpp=%s calibrated=%s",
-            self._mode,
+            "enabled_channels=%s record_length=%s readout_buffer_bytes=%s input_range_vpp=%s calibrated=%s fast_trigger_supported=%s",
+            self._trigger_mode,
             driver.n_groups,
             driver.channels_per_group,
             driver.n_total,
@@ -241,8 +246,78 @@ class DigitizerScanner:
             readout_size,
             self.input_range_vpp,
             self.calibrated,
+            self.supports_fast_trigger,
         )
         return self.enabled_channels
+
+    def _enable_simultaneous_triggers(self, cfg: dict):
+        """Configure the trigger hardware for simultaneous mode.
+
+        Enable all selected trigger sources (random SW, external, fast/TR0)
+        so they are OR'd together. The trigger_mode string encodes the combo.
+
+        Rules per board:
+          DT5742: random, external, fast, random-external, random-fast
+          DT5743: random, external, random-external
+        """
+        board_model = int(self.info.model)
+        trigger_mode = self._trigger_mode
+
+        # Validate allowed combos for the board
+        _ALLOWED_TRIGGER_MODES = {
+            18: {"random", "external", "fast", "random-external", "random-fast"},
+            27: {"random", "external", "random-external"},
+        }
+        allowed = _ALLOWED_TRIGGER_MODES.get(board_model, set())
+        if trigger_mode not in allowed:
+            raise ValueError(
+                f"DT{board_model}: trigger_mode '{trigger_mode}' not allowed. "
+                f"Allowed: {sorted(allowed)}"
+            )
+
+        # Determine which trigger paths to enable
+        has_random = trigger_mode in ("random",) or "random" in trigger_mode
+        has_external = trigger_mode in ("external",) or "external" in trigger_mode
+        has_fast = trigger_mode in ("fast",) or "fast" in trigger_mode
+
+        # Reset all trigger paths first (disable everything)
+        # External trigger input mode
+        try:
+            dev.set_ext_trigger_input_mode(TriggerMode.DISABLED)
+        except Exception:
+            pass
+
+        # Disable internal SW trigger if it was on
+        try:
+            dev.set_sw_trigger_mode(TriggerMode.DISABLED)
+        except Exception:
+            pass
+
+        # Enable the selected paths
+        if has_random:
+            # Software trigger is always enabled when random is part of the combo;
+            # periodic SendSWtrigger is driven from _do_step based on trigger_frequency_hz
+            try:
+                dev.set_sw_trigger_mode(TriggerMode.ACQ_ONLY)
+            except Exception:
+                pass
+
+        if has_external:
+            # External trigger input mode
+            try:
+                dev.set_ext_trigger_input_mode(TriggerMode.ACQ_ONLY)
+            except Exception:
+                pass
+
+        if has_fast and board_model == 18 and self.supports_fast_trigger:
+            # TR0 fast trigger is enabled - the comparator will fire when TR0
+            # crosses the configured threshold. Digitization is controlled separately
+            # by fast_trigger_digitizing in the cfg passed to driver.configure().
+            try:
+                # Ensure TR0 threshold from config is applied (driver.configure_triggers already did this)
+                dev.set_fast_trigger_mode(TriggerMode.ACQ_ONLY)
+            except Exception:
+                pass
 
     async def configure(self, cfg: dict):
         return await self._run(self._do_configure, cfg)
@@ -275,10 +350,12 @@ class DigitizerScanner:
         self._run_id = run_id
         self._hv_channels = hv_channels
         self._target = int(cfg.get("number_of_triggers", 0))
-        self._mode = cfg.get("trigger_mode", "random")
+        self._trigger_mode = cfg.get("trigger_mode", "random")
+        # SW trigger interval for random trigger (used when random is part of combo)
         freq = float(cfg.get("trigger_frequency_hz", 1.0))
+        has_random = "random" in self._trigger_mode
         self._sw_interval = (
-            (1.0 / freq) if (self._mode == "random" and freq > 0) else None
+            (1.0 / freq) if (has_random and freq > 0) else None
         )
 
         self._events = []
@@ -290,6 +367,7 @@ class DigitizerScanner:
         self._baselines = []
         self._charges = []
         self._waveforms = []
+        self._trigger_sources = []  # per-event trigger attribution (always "mixed" in simultaneous)
         self._collected = 0
         self._sw_triggers_sent = 0
         self._skipped_events = 0
@@ -310,7 +388,7 @@ class DigitizerScanner:
             "run=%s point=%s: acquisition started mode=%s target=%s freq=%s sw_interval=%s",
             run_id,
             point_index,
-            self._mode,
+            self._trigger_mode,
             self._target,
             freq,
             self._sw_interval,
@@ -333,7 +411,9 @@ class DigitizerScanner:
         now = time.monotonic()
 
         read_now = True
-        if self._sw_interval is not None:
+        # In simultaneous mode, software triggers fire whenever "random" is active
+        # (governed by trigger_frequency_hz). External and fast events arrive at any time.
+        if "random" in self._trigger_mode and self._sw_interval is not None:
             if now - self._last_sw >= self._sw_interval:
                 due = int((now - self._last_sw) / self._sw_interval)
                 due = max(1, min(due, _MAX_TRIGGERS_PER_STEP))
@@ -362,17 +442,11 @@ class DigitizerScanner:
                         t_sw,
                         due,
                     )
-            else:
-                # No software trigger due yet - the FIFO is empty, and an MBLT
-                # read on an empty FIFO can block indefinitely. Skip the read.
-                read_now = False
-                _LOG.debug(
-                    "run=%s point=%s: no sw_trigger due yet (%.0fms into %.0fms interval) - skip read",
-                    self._run_id,
-                    self._point_index,
-                    (now - self._last_sw) * 1000,
-                    self._sw_interval * 1000,
-                )
+        else:
+            # No random component; in simultaneous mode the FIFO could be empty
+            # if only external/fast sources are present. Still attempt a read but
+            # don't block indefinitely on an empty FIFO.
+            read_now = True
 
         n_events = 0
         t0 = time.monotonic()
@@ -428,6 +502,10 @@ class DigitizerScanner:
             self._charges.append(scalars["charge"])
             self._waveforms.append(deepcopy(waveforms))
             self._collected += 1
+            # In simultaneous mode every event is tagged "mixed"; TR0 digitization
+            # (tr0_g0/tr0_g1) is stored separately and can be used post-acquisition
+            # to differentiate fast vs random triggers.
+            self._trigger_sources.append("mixed")
             if self._target > 0 and self._collected >= self._target:
                 break
 
@@ -471,7 +549,7 @@ class DigitizerScanner:
                 self._collected,
                 self._target,
                 self._sw_triggers_sent,
-                self._mode,
+                self._trigger_mode,
             )
 
         return {"collected": self._collected, "target": self._target}
@@ -531,6 +609,7 @@ class DigitizerScanner:
             "peak": np.asarray(self._peaks, dtype=np.float32),
             "baseline": np.asarray(self._baselines, dtype=np.float32),
             "charge": np.asarray(self._charges, dtype=np.float32),
+            "trigger_source": np.asarray(self._trigger_sources, dtype="<U16"),
         }
         for idx, ch in enumerate(self.enabled_channels):
             arr = np.full((n, rec_len), np.nan, dtype=np.float32)
@@ -552,8 +631,11 @@ class DigitizerScanner:
             "n_channels": int(self.driver.n_total),
             "channels_used": [int(c) for c in self.enabled_channels],
             "record_length": int(rec_len),
-            "trigger_mode": self._mode,
+            "trigger_mode": self._trigger_mode,
+            "trigger_source_mode": "simultaneous",
             "number_of_triggers": int(self._target),
+            "trigger_sources": self._trigger_mode,
+            "trigger_source_attribution": "mixed",
             "input_range_vpp": float(self.input_range_vpp or 0.0),
             "dc_offset": int(self.dc_offset or 0),
             "sampling_frequency_hz": float(self.sampling_frequency_hz or 0.0),

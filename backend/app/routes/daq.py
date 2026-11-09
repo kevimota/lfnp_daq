@@ -168,10 +168,33 @@ def _validate_scan_params(req: RunCreateRequest, session) -> None:
                 status_code=400,
                 detail="Digitizer scan requires a digitizer_id",
             )
-        if req.trigger_mode not in ("random", "external"):
+        dig_row = session.get(CaenDigitizer, req.digitizer_id)
+        if not dig_row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Digitizer (id={req.digitizer_id}) not found",
+            )
+
+        board_model = dig_row.board_model
+        _ALLOWED_TRIGGER_MODES = {
+            18: ["random", "external", "fast", "random-external", "random-fast"],
+            27: ["random", "external", "random-external"],
+        }
+        allowed = _ALLOWED_TRIGGER_MODES.get(board_model, [])
+        if req.trigger_mode not in allowed:
+            allowed_str = ", ".join(f'"{m}"' for m in allowed)
             raise HTTPException(
                 status_code=400,
-                detail="trigger_mode must be 'random' or 'external'",
+                detail=(
+                    f"trigger_mode '{req.trigger_mode}' not allowed for "
+                    f"board_model {board_model} (DT5742=18, DT5743=27). "
+                    f"Allowed values: {allowed_str}"
+                ),
+            )
+        if "fast" in req.trigger_mode and board_model != 18:
+            raise HTTPException(
+                status_code=400,
+                detail="fast trigger mode (TR0) only supported on DT5742 (board_model 18)",
             )
         if not req.number_of_triggers or req.number_of_triggers <= 0:
             raise HTTPException(
@@ -190,14 +213,7 @@ def _validate_scan_params(req: RunCreateRequest, session) -> None:
                 status_code=400,
                 detail="sampling_frequency_hz must be > 0",
             )
-        dig_row = session.get(CaenDigitizer, req.digitizer_id)
-        if not dig_row:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Digitizer (id={req.digitizer_id}) not found",
-            )
 
-        board_model = dig_row.board_model
         if board_model not in _DIGITIZER_CHANNEL_COUNTS:
             raise HTTPException(
                 status_code=400,

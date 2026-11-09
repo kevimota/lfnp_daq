@@ -359,11 +359,30 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
                     status_code=404,
                     detail=f"Digitizer (id={config_row.digitizer_id}) not found",
                 )
-            if config_row.trigger_mode not in ("random", "external"):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Digitizer scan trigger_mode must be 'random' or 'external'",
-                )
+            if config_row.trigger_mode not in ("random", "external", "fast", "random-external", "random-fast"):
+                # DT5743 doesn't allow fast mode
+                if config_row.digitizer_id:
+                    from ..core.db import get_session
+                    from ..models.daq import CaenDigitizer
+                    with get_session() as s:
+                        dig = s.get(CaenDigitizer, config_row.digitizer_id)
+                    if dig and dig.board_model == 27:
+                        allowed = ["random", "external", "random-external"]
+                    else:
+                        allowed = ["random", "external", "fast", "random-external", "random-fast"]
+                    allowed_str = ", ".join(f'"{m}"' for m in allowed)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"trigger_mode '{config_row.trigger_mode}' not allowed. "
+                            f"Allowed values: {allowed_str}"
+                        ),
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="trigger_mode must be 'random', 'external', 'fast', 'random-external', or 'random-fast'",
+                    )
             if not config_row.number_of_triggers or config_row.number_of_triggers <= 0:
                 raise HTTPException(
                     status_code=400,
