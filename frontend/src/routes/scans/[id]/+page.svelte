@@ -1145,6 +1145,7 @@
                     {#if editTriggerMode === 'random' || editTriggerMode === 'random-external' || editTriggerMode === 'random-fast'}
                     <div class="col-span-2">
                     <div class="divider">Random Trigger</div>
+                    <div class="grid grid-cols-2 gap-4">
                     <label class="form-control flex flex-col w-full">
                       <span class="label-text">Trigger Frequency (Hz)</span>
                       <input type="number" step="0.1" class="input input-bordered"
@@ -1153,11 +1154,13 @@
                       />
                     </label>
                     </div>
+                    </div>
                     {/if}
                     {#if editTriggerMode === 'fast' || editTriggerMode === 'random-fast'}
                     <div class="col-span-2">
                       <div class="divider">Fast Trigger (TR0) Configuration</div>
-                      <label class="form-control flex flex-col w-full">
+                      <div class="grid grid-cols-2 gap-4">
+                        <label class="form-control flex flex-col w-full">
                         <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
                         <select class="select select-bordered" bind:value={editTriggerModeDigitizing}>
                           <option value={false}>No</option>
@@ -1174,6 +1177,7 @@
                         <input type="number" min="0" max="65535" class="input input-bordered"
                           bind:value={editTriggerModeDcOffset} />
                       </label>
+                      </div>
                     </div>
                     {/if}
 
