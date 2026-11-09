@@ -596,21 +596,20 @@
               </label>
 
               {#if newScan.trigger_mode === 'random' || newScan.trigger_mode === 'random-external' || newScan.trigger_mode === 'random-fast'}
-              <div class="col-span-2">
-                <div class="divider divider-primary">Random Trigger</div>
-                <label class="form-control">
-                  <span class="label-text">Trigger Frequency (Hz)</span>
-                  <input type="number" step="0.1" class="input input-bordered"
-                    bind:value={newScan.trigger_frequency_hz}
-                    max={newScan.trigger_mode === 'random' ? 1000 : 10}
-                  />
-                </label>
-              </div>
+              <div class="divider">Random Trigger</div>
+              <label class="form-control">
+                <span class="label-text">Trigger Frequency (Hz)</span>
+                <input type="number" step="0.1" class="input input-bordered"
+                  bind:value={newScan.trigger_frequency_hz}
+                  max={newScan.trigger_mode === 'random' ? 1000 : 10}
+                />
+              </label>
+              {/div}
               {/if}
 
               {#if newScan.trigger_mode === 'fast' || newScan.trigger_mode === 'random-fast'}
               <div class="col-span-2">
-                <div class="divider divider-primary">Fast Trigger (TR0) Configuration</div>
+                <div class="divider">Fast Trigger (TR0) Configuration</div>
                 <label class="form-control">
                   <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
                   <select class="select select-bordered" bind:value={newScan.fast_trigger_digitizing}>
