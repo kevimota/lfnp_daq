@@ -1153,8 +1153,7 @@
                         bind:value={editRecordLength} />
                     </label>
                     <label class="form-control flex flex-col">
-                      <span class="label-text">Sampling Frequency ({#if samplingOptions(digitizerBoardModel(editDigitizerId)).length}
-                        only {samplingOptions(digitizerBoardModel(editDigitizerId)).map(formatSamplingFrequency).join(' / ')}{/if})</span>
+                      <span class="label-text">Sampling Frequency </span>
                       <select class="select select-bordered" bind:value={editSamplingFrequencyHz}>
                         {#each samplingOptions(digitizerBoardModel(editDigitizerId)) as hz}
                           <option value={hz}>{formatSamplingFrequency(hz)}</option>
