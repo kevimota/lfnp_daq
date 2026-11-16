@@ -109,6 +109,7 @@ class DigitizerScanner:
         self._baselines: list[float] = []
         self._charges: list[float] = []
         self._waveforms: list[list[np.ndarray]] = []
+        self._tr0_waveforms: list = []
         self._read_attempts = 0
 
     @property
@@ -367,6 +368,7 @@ class DigitizerScanner:
         self._baselines = []
         self._charges = []
         self._waveforms = []
+        self._tr0_waveforms = []
         self._trigger_sources = []  # per-event trigger attribution (always "mixed" in simultaneous)
         self._collected = 0
         self._sw_triggers_sent = 0
@@ -491,7 +493,7 @@ class DigitizerScanner:
             if extracted is None:
                 self._skipped_events += 1
                 continue
-            waveforms, scalars = extracted
+            waveforms, scalars, tr0 = extracted
             self._events.append(self._collected)
             self._timestamps.append(datetime.now(UTC).timestamp())
             self._time_tags.append(info.trigger_time_tag)
@@ -501,6 +503,7 @@ class DigitizerScanner:
             self._baselines.append(scalars["baseline"])
             self._charges.append(scalars["charge"])
             self._waveforms.append(deepcopy(waveforms))
+            self._tr0_waveforms.append(deepcopy(tr0) if tr0 is not None else None)
             self._collected += 1
             # In simultaneous mode every event is tagged "mixed"; TR0 digitization
             # (tr0_g0/tr0_g1) is stored separately and can be used post-acquisition
@@ -619,6 +622,20 @@ class DigitizerScanner:
                     arr[e, : w.shape[0]] = w[:rec_len]
             data[f"ch{ch}"] = arr
 
+        # TR0 (fast trigger digitizing) waveforms per acquisition group. Only
+        # written when the driver actually enabled digitization, so a config
+        # with fast_trigger_digitizing=false/None produces no tr0_g* branches.
+        if self._tr0_waveforms and getattr(self.driver, "fast_trigger_digitizing", False):
+            for g in range(self.driver.n_groups):
+                arr = np.full((n, rec_len), np.nan, dtype=np.float32)
+                for e in range(n):
+                    w = None
+                    if self._tr0_waveforms[e] is not None and g < len(self._tr0_waveforms[e]):
+                        w = self._tr0_waveforms[e][g]
+                    if w is not None:
+                        arr[e, : w.shape[0]] = w[:rec_len]
+                data[f"tr0_g{g}"] = arr
+
         meta_fields = {
             "run_id": int(self._run_id),
             "point_index": int(self._point_index),
@@ -647,6 +664,9 @@ class DigitizerScanner:
             "calibrated": 1 if self.calibrated else 0,
             "connection_type": int(self.connection_type),
             "link_used": str(self.arg),
+            "fast_trigger_digitizing": bool(
+                getattr(self.driver, "fast_trigger_digitizing", False)
+            ),
         }
         if self._hv_channels:
             meta_fields["hv_slot"] = [int(c["slot"]) for c in self._hv_channels]

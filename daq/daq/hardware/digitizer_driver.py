@@ -128,6 +128,7 @@ class DigitizerDriver(ABC):
         self.enabled_channels: list[int] = []
         self.calibrated = False
         self._resolved_frequency_hz = self.default_frequency_hz or 0
+        self.fast_trigger_digitizing = False
 
     @property
     def model(self) -> BoardModel:
@@ -387,21 +388,24 @@ class X742Driver(DigitizerDriver):
                 self._caen_call(dev.set_channel_dc_offset, ch, code)
 
         if cfg.get("fast_trigger_digitizing") is not None:
+            self.fast_trigger_digitizing = bool(cfg["fast_trigger_digitizing"])
             self._caen_call(
                 dev.set_fast_trigger_digitizing, EnaDis(cfg["fast_trigger_digitizing"])
             )
-            if cfg["fast_trigger_digitizing"]:
-                # Append TR0 channels (n_total + group index) to enabled_channels
-                # so extract() and the ROOT writer include them.
-                for g in range(self.n_groups):
-                    tr0_ch = self.n_total + g
-                    if tr0_ch not in self.enabled_channels:
-                        self.enabled_channels.append(tr0_ch)
 
     def extract(self, evt):
+        """Return (waveforms, scalars, tr0_waveforms) or None.
+
+        ``waveforms`` is aligned to ``enabled_channels``. ``tr0_waveforms`` is a
+        list with one entry per acquisition group (``None`` when the group is
+        absent or TR0 digitizing is disabled), read from the per-group TR0
+        channel (index ``channels_per_group``) whenever
+        ``fast_trigger_digitizing`` is enabled.
+        """
         if not isinstance(evt, X742Event):
             return None
         waveforms = [None] * len(self.enabled_channels)
+        tr0_waveforms: list = [None] * self.n_groups
         scalars = {
             "tdc": 0,
             "peak": 0.0,
@@ -416,7 +420,6 @@ class X742Driver(DigitizerDriver):
             if not found_scalars:
                 scalars["start_cell"] = int(group.start_index_cell)
                 found_scalars = True
-            start_cell = int(group.start_index_cell)
             group_wf = [
                 np.array(group.data_channel[j], dtype=np.float32)
                 for j in range(self.channels_per_group)
@@ -425,20 +428,20 @@ class X742Driver(DigitizerDriver):
                 ch = g_idx * self.channels_per_group + j
                 if w.size and ch in self.enabled_channels:
                     waveforms[self.enabled_channels.index(ch)] = w
-            # Also capture TR0 (channel index 8 per group) if fast_trigger_digitizing is enabled
-            if self.n_groups > 0 and g_idx < self.n_groups:
-                # TR0 channel index is g_idx * channels_per_group + channels_per_group = g_idx*9+8
-                # But actually the per-group channel 8 is TR0. In the flat enabled_channels,
-                # TR0 would be at position g_idx*channels_per_group + channels_per_group
-                # = g_idx * 9 + 8. For DT5742 with n_groups=2: TR0 for group 0 is channel 16, group 1 is 17
-                tr0_idx = self.n_total + g_idx  # e.g., 16 and 17 for DT5742
-                if tr0_idx in self.enabled_channels:
-                    tr0_wf = np.array(group.data_channel[self.channels_per_group], dtype=np.float32)
+            # TR0 is the per-group channel at index `channels_per_group` (8 for
+            # DT5742). Digitization is governed solely by the fast_trigger_digitizing
+            # flag, not by enabled_channels.
+            if self.fast_trigger_digitizing and g_idx < self.n_groups:
+                data_channel = group.data_channel
+                if len(data_channel) > self.channels_per_group:
+                    tr0_wf = np.array(
+                        data_channel[self.channels_per_group], dtype=np.float32
+                    )
                     if tr0_wf.size:
-                        waveforms[self.enabled_channels.index(tr0_idx)] = tr0_wf
+                        tr0_waveforms[g_idx] = tr0_wf
         if not any(w is not None for w in waveforms):
             return None
-        return waveforms, scalars
+        return waveforms, scalars, tr0_waveforms
 
 
 class X743Driver(DigitizerDriver):
@@ -506,6 +509,11 @@ class X743Driver(DigitizerDriver):
                 )
 
     def extract(self, evt):
+        """Return (waveforms, scalars, tr0_waveforms) or None.
+
+        DT5743 has no fast-trigger TR0 digitization; ``tr0_waveforms`` is always
+        ``None``.
+        """
         if not isinstance(evt, X743Event):
             return None
         waveforms = [None] * len(self.enabled_channels)
@@ -537,7 +545,7 @@ class X743Driver(DigitizerDriver):
                     )
         if not any(w is not None for w in waveforms):
             return None
-        return waveforms, scalars
+        return waveforms, scalars, None
 
 
 def build_driver(info) -> DigitizerDriver:
