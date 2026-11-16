@@ -59,7 +59,11 @@ def get_configuration(config_id: int, session: SessionDep):
     return config
 
 
-@router.put("/configs/{config_id}", dependencies=[Depends(get_current_user)])
+@router.put(
+    "/configs/{config_id}",
+    response_model=DAQConfigResponse,
+    dependencies=[Depends(get_current_user)],
+)
 def update_configuration(config_id: int, req: RunCreateRequest, session: SessionDep):
     config = session.get(DAQConfiguration, config_id)
     if not config:
@@ -84,6 +88,10 @@ def update_configuration(config_id: int, req: RunCreateRequest, session: Session
     config.fast_trigger_digitizing = req.fast_trigger_digitizing
     config.fast_trigger_threshold = req.fast_trigger_threshold
     config.fast_trigger_dc_offset = req.fast_trigger_dc_offset
+    session.add(config)
+    session.commit()
+    session.refresh(config)
+    return config
 
 
 @router.delete("/configs/{config_id}", dependencies=[Depends(get_current_user)])

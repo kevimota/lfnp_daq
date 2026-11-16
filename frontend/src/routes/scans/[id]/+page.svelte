@@ -739,6 +739,7 @@
         channels: editScanType === 'digitizer_scan' ? editChannels : null,
       };
       const { data } = await api.put(`/daq/configs/${config.id}`, body);
+      if (!data) throw new Error('Empty response from server');
       toast.success('Configuration saved');
       config = data;
       editScanType = data.type || 'hv_scan';
