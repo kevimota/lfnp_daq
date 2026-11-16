@@ -72,6 +72,9 @@ class DAQConfigurationDB(SQLModel, table=True):
     post_trigger_size: Optional[int] = Field(default=None)
     dc_offset: Optional[int] = Field(default=None)
     channels: Optional[List] = Field(default=None, sa_column=Column(JSONB))
+    fast_trigger_digitizing: Optional[bool] = Field(default=None)
+    fast_trigger_threshold: Optional[int] = Field(default=None)
+    fast_trigger_dc_offset: Optional[int] = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),
