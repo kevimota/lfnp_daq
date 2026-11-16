@@ -107,6 +107,9 @@ class DataWriter:
         samples: int | None = None,
         triggers: int | None = None,
         target: int | None = None,
+        random_triggers: int | None = None,
+        total_triggers: int | None = None,
+        count_physical_only: bool | None = None,
     ) -> None:
         progress = self.read_progress(run_dir)
         key = str(point_index)
@@ -124,6 +127,12 @@ class DataWriter:
             entry["triggers"] = triggers
         if target is not None:
             entry["target"] = target
+        if random_triggers is not None:
+            entry["random_triggers"] = random_triggers
+        if total_triggers is not None:
+            entry["total_triggers"] = total_triggers
+        if count_physical_only is not None:
+            entry["count_physical_only"] = count_physical_only
         progress["points"][key] = entry
         self._write_progress(run_dir, progress)
 

@@ -107,6 +107,9 @@
     data: ChannelReading[];
     triggers?: number;
     target?: number;
+    random_triggers?: number;
+    total_triggers?: number;
+    count_physical_only?: boolean;
     timestamp: string;
   }
 
@@ -125,6 +128,9 @@
     samples: number | null;
     triggers: number | null;
     target: number | null;
+    random_triggers: number | null;
+    total_triggers: number | null;
+    count_physical_only: boolean | null;
     voltages: PointVoltage[];
     data_files: string[];
     file_exists: boolean;
@@ -184,6 +190,13 @@
 
   const runId = $derived(Number(page.params.id));
   const latestLive = $derived(liveData.at(-1) ?? null);
+
+  // In 2-trigger modes only physical (fast/external) triggers advance the
+  // goal; random events are still recorded and shown separately.
+  function isTwoTriggerMode(): boolean {
+    const mode = config?.trigger_mode;
+    return mode === 'random-fast' || mode === 'random-external';
+  }
   const completedCount = $derived.by(() =>
     scanProgress ? scanProgress.completed_points.length : 0,
   );
@@ -493,7 +506,12 @@
 
   function formatPointCount(point: PointProgress): string {
     if (point.triggers != null || point.target != null) {
-      return `${point.triggers ?? '—'} / ${point.target ?? '—'}`;
+      const base = `${point.triggers ?? '—'} / ${point.target ?? '—'}`;
+      const twoTrigger = point.count_physical_only ?? isTwoTriggerMode();
+      if (twoTrigger && point.random_triggers != null) {
+        return `Physical ${base} · Random ${point.random_triggers}`;
+      }
+      return base;
     }
     if (point.samples != null) return `${point.samples} samples`;
     return '—';
@@ -994,7 +1012,12 @@
               {#if latestLive}
                 <span>Point {latestLive.point}</span>
                 {#if latestLive.triggers !== undefined && latestLive.target !== undefined}
-                  <span>Triggers {latestLive.triggers}/{latestLive.target}</span>
+                  <span>
+                    Triggers {latestLive.triggers}/{latestLive.target}
+                    {#if latestLive.count_physical_only && latestLive.random_triggers !== undefined}
+                      · Random {latestLive.random_triggers}
+                    {/if}
+                  </span>
                 {/if}
                 <span>Updated {new Date(latestLive.timestamp).toLocaleTimeString()}</span>
               {:else}
@@ -1232,7 +1255,7 @@
                     <div class="divider">Fast Trigger (TR0) Configuration</div>
                     <div class="grid grid-cols-2 gap-4">
                       <label class="form-control flex flex-col w-full">
-                      <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
+                      <span class="label-text">Digitize TR0</span>
                       <select class="select select-bordered" bind:value={editTriggerModeDigitizing}>
                         <option value={false}>No</option>
                         <option value={true}>Yes</option>

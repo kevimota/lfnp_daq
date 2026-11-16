@@ -91,9 +91,17 @@ class DigitizerScanner:
         self._hv_channels: list[dict] = []
         self._target = 0
         self._trigger_mode: str = "random"
+        self._has_random = False
+        self._has_physical = False
         self._sw_interval: Optional[float] = None
         self._last_sw = 0.0
         self._collected = 0
+        #: Events that count toward the goal. In 2-trigger modes (random +
+        #: fast/external) only physical triggers count; random ones are still
+        #: recorded but do not advance the goal.
+        self._physical_collected = 0
+        self._random_collected = 0
+        self._count_physical_only = False
         self._sw_triggers_sent = 0
         self._skipped_events = 0
         self._point_started = 0.0
@@ -115,6 +123,25 @@ class DigitizerScanner:
     @property
     def collected(self) -> int:
         return self._collected
+
+    @property
+    def physical_collected(self) -> int:
+        """Physical (fast/external) events counted toward the goal."""
+        return self._physical_collected
+
+    @property
+    def goal_collected(self) -> int:
+        """Count that drives the goal/progress (physical in 2-trigger modes)."""
+        return self._physical_collected if self._count_physical_only else self._collected
+
+    @property
+    def random_collected(self) -> int:
+        """Random-triggered events recorded in this point."""
+        return self._random_collected
+
+    @property
+    def count_physical_only(self) -> bool:
+        return self._count_physical_only
 
     # ── lifecycle ───────────────────────────────────────────────
 
@@ -355,6 +382,14 @@ class DigitizerScanner:
         # SW trigger interval for random trigger (used when random is part of combo)
         freq = float(cfg.get("trigger_frequency_hz", 1.0))
         has_random = "random" in self._trigger_mode
+        has_external = "external" in self._trigger_mode
+        has_fast = "fast" in self._trigger_mode
+        has_physical = has_external or has_fast
+        self._has_random = has_random
+        self._has_physical = has_physical
+        # 2-trigger mode: random events are recorded but only physical
+        # (fast/external) triggers advance the goal.
+        self._count_physical_only = has_random and has_physical
         self._sw_interval = (
             (1.0 / freq) if (has_random and freq > 0) else None
         )
@@ -371,6 +406,8 @@ class DigitizerScanner:
         self._tr0_waveforms = []
         self._trigger_sources = []  # per-event trigger attribution (always "mixed" in simultaneous)
         self._collected = 0
+        self._physical_collected = 0
+        self._random_collected = 0
         self._sw_triggers_sent = 0
         self._skipped_events = 0
         self._read_attempts = 0
@@ -407,6 +444,25 @@ class DigitizerScanner:
         return await self._run(
             self._do_begin_point, run_dir, point_index, cfg, hv_channels, run_id
         )
+
+    def _update_counts(self) -> None:
+        """Recompute goal and random event counts from the raw totals.
+
+        Every software trigger produces one event, so random events add one to
+        both ``_collected`` and ``_sw_triggers_sent`` and cancel out, while
+        physical events only add to ``_collected``. If the board drops or
+        coalesces a software trigger the physical count lags (the point takes
+        slightly longer) but can never stop early on random triggers.
+        """
+        if self._count_physical_only:
+            self._physical_collected = max(0, self._collected - self._sw_triggers_sent)
+            self._random_collected = self._collected - self._physical_collected
+        elif self._has_random and not self._has_physical:
+            self._physical_collected = 0
+            self._random_collected = self._collected
+        else:
+            self._physical_collected = self._collected
+            self._random_collected = 0
 
     def _do_step(self) -> dict:
         dev = self.device
@@ -509,7 +565,8 @@ class DigitizerScanner:
             # (tr0_g0/tr0_g1) is stored separately and can be used post-acquisition
             # to differentiate fast vs random triggers.
             self._trigger_sources.append("mixed")
-            if self._target > 0 and self._collected >= self._target:
+            self._update_counts()
+            if self._target > 0 and self._physical_collected >= self._target:
                 break
 
         if n_events:
@@ -525,17 +582,23 @@ class DigitizerScanner:
             )
 
         if self._target > 0:
-            progress = self._collected / self._target
+            # SW triggers may have been sent without producing events, so
+            # refresh the derived counts before reporting progress.
+            self._update_counts()
+            progress = self._physical_collected / self._target
             milestone = int(progress * (_MILESTONE_STEPS - 1))
             if milestone != self._last_milestone:
                 self._last_milestone = milestone
                 _LOG.info(
-                    "run=%s point=%s: progress %.0f%% (%s/%s) triggers sent=%s skipped=%s elapsed=%.1fs",
+                    "run=%s point=%s: progress %.0f%% (physical=%s/%s random=%s total=%s) "
+                    "triggers sent=%s skipped=%s elapsed=%.1fs",
                     self._run_id,
                     self._point_index,
                     progress * 100,
-                    self._collected,
+                    self._physical_collected,
                     self._target,
+                    self._random_collected,
+                    self._collected,
                     self._sw_triggers_sent,
                     self._skipped_events,
                     time.monotonic() - self._point_started,
@@ -544,18 +607,32 @@ class DigitizerScanner:
         if not self._stall_warned and now - self._last_collect_at > _STALL_LOG_SECONDS:
             self._stall_warned = True
             _LOG.warning(
-                "run=%s point=%s: no new events collected for %.0fs (collected=%s/%s "
-                "triggers sent=%s mode=%s) - scan may never finish",
+                "run=%s point=%s: no new events collected for %.0fs (physical=%s/%s "
+                "random=%s total=%s triggers sent=%s mode=%s) - scan may never finish",
                 self._run_id,
                 self._point_index,
                 now - self._last_collect_at,
-                self._collected,
+                self._physical_collected,
                 self._target,
+                self._random_collected,
+                self._collected,
                 self._sw_triggers_sent,
                 self._trigger_mode,
             )
 
-        return {"collected": self._collected, "target": self._target}
+        return {
+            "collected": (
+                self._physical_collected
+                if self._count_physical_only
+                else self._collected
+            ),
+            "physical_collected": self._physical_collected,
+            "random_collected": self._random_collected,
+            "total_collected": self._collected,
+            "sw_triggers_sent": self._sw_triggers_sent,
+            "count_physical_only": self._count_physical_only,
+            "target": self._target,
+        }
 
     async def step(self) -> dict:
         """One readout iteration (runs on a worker thread)."""
@@ -570,18 +647,27 @@ class DigitizerScanner:
             pass
 
         path = os.path.join(self._run_dir, f"digitizer_point_{self._point_index}.root")
+        self._update_counts()
         self._write_root(path)
         _LOG.info(
-            "run=%s point=%s: acquisition ended collected=%s/%s (skipped=%s, triggers sent=%s) -> %s",
+            "run=%s point=%s: acquisition ended physical=%s/%s random=%s total=%s "
+            "(skipped=%s, triggers sent=%s) -> %s",
             self._run_id,
             self._point_index,
-            self._collected,
+            self._physical_collected,
             self._target,
+            self._random_collected,
+            self._collected,
             self._skipped_events,
             self._sw_triggers_sent,
             path,
         )
-        return {"n_events": self._collected, "path": path}
+        return {
+            "n_events": self._collected,
+            "physical_collected": self._physical_collected,
+            "random_collected": self._random_collected,
+            "path": path,
+        }
 
     async def end_point(self) -> dict:
         """Stop acquisition and write the per-point ROOT file (on a worker thread)."""
@@ -651,6 +737,11 @@ class DigitizerScanner:
             "trigger_mode": self._trigger_mode,
             "trigger_source_mode": "simultaneous",
             "number_of_triggers": int(self._target),
+            "physical_collected": int(self._physical_collected),
+            "random_collected": int(self._random_collected),
+            "total_collected": int(self._collected),
+            "sw_triggers_sent": int(self._sw_triggers_sent),
+            "count_physical_only": bool(self._count_physical_only),
             "trigger_sources": self._trigger_mode,
             "trigger_source_attribution": "mixed",
             "input_range_vpp": float(self.input_range_vpp or 0.0),

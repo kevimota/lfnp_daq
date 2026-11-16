@@ -94,22 +94,25 @@ class DigitizerScan(CurrentScanner):
                     changed_at = now
                 stale = now - changed_at
                 _LOG.info(
-                    "run=%s point=%s: waiting… collected=%s/%s elapsed=%.0fs",
+                    "run=%s point=%s: waiting… physical=%s/%s random=%s total=%s elapsed=%.0fs",
                     run_id,
                     point_index,
-                    cnt,
+                    self.digitizer.goal_collected,
                     target,
+                    self.digitizer.random_collected,
+                    cnt,
                     now - point_started,
                 )
                 if stale > _STALL_LOG_SECONDS and self.fsm.state == DAQState.RECORDING:
                     _LOG.warning(
                         "run=%s point=%s: no new events for %.0fs "
-                        "(collected=%s/%s) - send_sw_trigger/read_data likely blocked",
+                        "(physical=%s/%s random=%s) - send_sw_trigger/read_data likely blocked",
                         run_id,
                         point_index,
                         stale,
-                        cnt,
+                        self.digitizer.goal_collected,
                         target,
+                        self.digitizer.random_collected,
                     )
 
         liveness = asyncio.create_task(_liveness())
@@ -143,8 +146,11 @@ class DigitizerScan(CurrentScanner):
                             "type": "current_scan",
                             "point": point_index + 1,
                             "data": readings,
-                            "triggers": self.digitizer.collected,
+                            "triggers": self.digitizer.goal_collected,
                             "target": target,
+                            "random_triggers": self.digitizer.random_collected,
+                            "total_triggers": self.digitizer.collected,
+                            "count_physical_only": self.digitizer.count_physical_only,
                             "timestamp": datetime.now(UTC).isoformat(),
                         })
 
@@ -180,6 +186,9 @@ class DigitizerScan(CurrentScanner):
                 voltages=point_config,
                 data_files=data_files,
                 samples=samples_recorded,
-                triggers=self.digitizer.collected,
+                triggers=self.digitizer.goal_collected,
                 target=target,
+                random_triggers=self.digitizer.random_collected,
+                total_triggers=self.digitizer.collected,
+                count_physical_only=self.digitizer.count_physical_only,
             )

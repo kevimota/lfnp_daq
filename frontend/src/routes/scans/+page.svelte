@@ -678,7 +678,7 @@
                 <div class="divider">Fast Trigger (TR0) Configuration</div>
                 <div class="grid grid-cols-2 gap-4">
                   <label class="form-control w-full">
-                    <span class="label-text">Digitize TR0 (optional synthetic channels)</span>
+                    <span class="label-text">Digitize TR0</span>
                     <select class="select select-bordered" bind:value={newScan.fast_trigger_digitizing}>
                       <option value={false}>No</option>
                       <option value={true}>Yes</option>
