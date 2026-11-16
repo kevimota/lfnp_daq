@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, Query
+from fastapi.responses import StreamingResponse
 from sqlmodel import select, func
 from typing import List, Optional
 from datetime import datetime, UTC
 from ..routes.users import get_current_user
 import httpx
+import json
 import math
+from urllib.parse import quote
 
 from ..core.config import config
 from ..core.db import SessionDep
@@ -620,46 +623,70 @@ async def list_run_files(run_id: int, session: SessionDep):
     return {"files": []}
 
 
+async def _stream_from_daq(
+    url: str,
+    fallback_media_type: str,
+    filename: str | None = None,
+) -> StreamingResponse:
+    """Proxy a DAQ download as a stream.
+
+    The archive/file is never buffered in this service: chunks are relayed as
+    they arrive, so large downloads start immediately and use constant memory.
+    Read timeouts are disabled (a big archive can legitimately take minutes);
+    only the connection attempt is bounded.
+    """
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
+        verify=False,
+    )
+    try:
+        request = client.build_request("GET", url)
+        resp = await client.send(request, stream=True)
+    except httpx.HTTPError:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="DAQ service is unreachable")
+
+    if resp.status_code != 200:
+        detail = "DAQ error"
+        try:
+            payload = await resp.aread()
+            detail = json.loads(payload).get("detail", detail)
+        except Exception:
+            pass
+        await resp.aclose()
+        await client.aclose()
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+
+    headers: dict[str, str] = {}
+    for key in ("content-length", "content-disposition"):
+        value = resp.headers.get(key)
+        if value:
+            headers[key] = value
+    if filename and "content-disposition" not in headers:
+        headers["content-disposition"] = f'attachment; filename="{filename}"'
+    media_type = resp.headers.get("content-type", fallback_media_type)
+
+    async def iterator():
+        try:
+            async for chunk in resp.aiter_raw():
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(iterator(), media_type=media_type, headers=headers)
+
+
 @router.get("/runs/{run_id}/files/{filename:path}")
 async def download_run_file(run_id: int, filename: str, session: SessionDep):
     _check_run_exists(run_id, session)
-    daq_url = config.DAQ_URL
-    url = f"{daq_url}/daq/runs/{run_id}/files/{filename}"
-    try:
-        async with httpx.AsyncClient(timeout=30, verify=False) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                content_type = resp.headers.get(
-                    "content-type", "application/octet-stream"
-                )
-                return Response(
-                    content=resp.content,
-                    media_type=content_type,
-                    headers={
-                        "Content-Disposition": f'attachment; filename="{filename}"'
-                    },
-                )
-    except Exception:
-        pass
-    raise HTTPException(status_code=404, detail="File not found")
+    url = f"{config.DAQ_URL}/daq/runs/{run_id}/files/{quote(filename)}"
+    basename = filename.rsplit("/", 1)[-1]
+    return await _stream_from_daq(url, "application/octet-stream", filename=basename)
 
 
 @router.get("/runs/{run_id}/download")
 async def download_run_archive(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
-    daq_url = config.DAQ_URL
-    url = f"{daq_url}/daq/runs/{run_id}/download"
-    try:
-        async with httpx.AsyncClient(timeout=60, verify=False) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                return Response(
-                    content=resp.content,
-                    media_type="application/zip",
-                    headers={
-                        "Content-Disposition": f'attachment; filename="run_{run_id}.zip"'
-                    },
-                )
-    except Exception:
-        pass
-    raise HTTPException(status_code=404, detail="Run data not found")
+    url = f"{config.DAQ_URL}/daq/runs/{run_id}/download"
+    return await _stream_from_daq(url, "application/zip", filename=f"run_{run_id}.zip")

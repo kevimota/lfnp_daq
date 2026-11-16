@@ -13,6 +13,7 @@ from ..models import DAQStatusResponse, RunStartRequest
 from ..hardware import CaenPSInterface, DigitizerScanner
 from ..scans import SCAN_TYPES
 from . import ScanContext, data_writer, scan_manager, _background_scan
+from .files import invalidate_archive_cache
 
 router = APIRouter()
 
@@ -421,6 +422,9 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
 
     fsm = DAQFSM()
     fsm.initialize()
+    # A (re)start rewrites/extends the run directory, so any cached archive is
+    # now stale. Drop it before new data is written.
+    invalidate_archive_cache(run_id)
     broadcaster = DataBroadcaster()
     scanner_cls = SCAN_TYPES[scan_type]
     if scan_type == "digitizer_scan":

@@ -584,32 +584,35 @@
     }
   }
 
-  async function downloadAllFiles() {
-    try {
-      const resp = await api.get(`/daq/runs/${runId}/download`, { responseType: 'blob' });
-      const url = URL.createObjectURL(resp.data);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `run_${runId}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast.error('Failed to download archive');
-    }
+  function apiBase(): string {
+    return `${env.PUBLIC_API_URL || 'http://localhost'}:${env.PUBLIC_API_PORT || '8000'}`;
   }
 
-  async function downloadFile(file: { name: string }) {
-    try {
-      const resp = await api.get(`/daq/runs/${runId}/files/${file.name}`, { responseType: 'blob' });
-      const url = URL.createObjectURL(resp.data);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.name;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast.error('Failed to download file');
-    }
+  // Let the browser download straight from the API. The response streams to
+  // disk with native progress and constant memory, instead of being buffered
+  // into a JS Blob first (which is very slow/memory-hungry for large runs).
+  function triggerBrowserDownload(path: string, filename: string) {
+    const a = document.createElement('a');
+    a.href = `${apiBase()}${path}`;
+    a.download = filename;
+    // New tab: a successful response downloads via Content-Disposition; an
+    // error response opens in a tab instead of replacing the current page.
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function downloadAllFiles() {
+    triggerBrowserDownload(`/daq/runs/${runId}/download`, `run_${runId}.zip`);
+  }
+
+  function downloadFile(file: { name: string }) {
+    triggerBrowserDownload(
+      `/daq/runs/${runId}/files/${encodeURIComponent(file.name)}`,
+      file.name
+    );
   }
 
   async function deleteRun() {
