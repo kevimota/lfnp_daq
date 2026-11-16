@@ -23,6 +23,9 @@ class DAQConfigResponse(SQLModel):
     post_trigger_size: Optional[int] = None
     dc_offset: Optional[int] = None
     channels: Optional[List] = None
+    fast_trigger_digitizing: Optional[bool] = None
+    fast_trigger_threshold: Optional[int] = None
+    fast_trigger_dc_offset: Optional[int] = None
     created_at: datetime
 class RunCreateRequest(SQLModel):
     type: str = "hv_scan"
@@ -41,6 +44,9 @@ class RunCreateRequest(SQLModel):
     post_trigger_size: Optional[int] = None
     dc_offset: Optional[int] = None
     channels: Optional[List] = None
+    fast_trigger_digitizing: Optional[bool] = None
+    fast_trigger_threshold: Optional[int] = None
+    fast_trigger_dc_offset: Optional[int] = None
     label: Optional[str] = None
     comments: Optional[str] = None
 class DAQRunResponse(SQLModel):
@@ -90,6 +96,9 @@ class DAQConfiguration(SQLModel, table=True):
     post_trigger_size: Optional[int] = Field(default=None)
     dc_offset: Optional[int] = Field(default=None)
     channels: Optional[List] = Field(default=None, sa_column=Column(JSONB))
+    fast_trigger_digitizing: Optional[bool] = Field(default=None)
+    fast_trigger_threshold: Optional[int] = Field(default=None)
+    fast_trigger_dc_offset: Optional[int] = Field(default=None)
     created_at: datetime = Field(
         default_factory=_utcnow,
         sa_type=DateTime(timezone=True),

@@ -33,6 +33,9 @@ def init_db(session: Session) -> None:
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS post_trigger_size INTEGER",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS dc_offset INTEGER",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS channels JSONB",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS fast_trigger_digitizing BOOLEAN",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS fast_trigger_threshold INTEGER",
+        "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS fast_trigger_dc_offset INTEGER",
         "ALTER TABLE daq_configuration DROP COLUMN IF EXISTS digitizer_config",
     ):
         with engine.begin() as conn:

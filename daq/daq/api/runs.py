@@ -406,6 +406,12 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
                         ),
                     )
                 config["dc_offset"] = config_row.dc_offset
+            if config_row.fast_trigger_digitizing is not None:
+                config["fast_trigger_digitizing"] = config_row.fast_trigger_digitizing
+            if config_row.fast_trigger_threshold is not None:
+                config["fast_trigger_thresholds"] = [config_row.fast_trigger_threshold] * 2
+            if config_row.fast_trigger_dc_offset is not None:
+                config["fast_trigger_dc_offsets"] = [config_row.fast_trigger_dc_offset] * 2
 
     system_type = SystemType(ps_row.system_type)
     link_type = LinkType(ps_row.link_type)

@@ -81,10 +81,9 @@ def update_configuration(config_id: int, req: RunCreateRequest, session: Session
     config.post_trigger_size = req.post_trigger_size
     config.dc_offset = req.dc_offset
     config.channels = req.channels
-    session.add(config)
-    session.commit()
-    session.refresh(config)
-    return config
+    config.fast_trigger_digitizing = req.fast_trigger_digitizing
+    config.fast_trigger_threshold = req.fast_trigger_threshold
+    config.fast_trigger_dc_offset = req.fast_trigger_dc_offset
 
 
 @router.delete("/configs/{config_id}", dependencies=[Depends(get_current_user)])
@@ -290,6 +289,9 @@ def create_run(req: RunCreateRequest, session: SessionDep):
         post_trigger_size=req.post_trigger_size,
         dc_offset=req.dc_offset,
         channels=req.channels,
+        fast_trigger_digitizing=req.fast_trigger_digitizing,
+        fast_trigger_threshold=req.fast_trigger_threshold,
+        fast_trigger_dc_offset=req.fast_trigger_dc_offset,
     )
     session.add(config)
     session.commit()

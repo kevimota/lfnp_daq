@@ -390,6 +390,13 @@ class X742Driver(DigitizerDriver):
             self._caen_call(
                 dev.set_fast_trigger_digitizing, EnaDis(cfg["fast_trigger_digitizing"])
             )
+            if cfg["fast_trigger_digitizing"]:
+                # Append TR0 channels (n_total + group index) to enabled_channels
+                # so extract() and the ROOT writer include them.
+                for g in range(self.n_groups):
+                    tr0_ch = self.n_total + g
+                    if tr0_ch not in self.enabled_channels:
+                        self.enabled_channels.append(tr0_ch)
 
     def extract(self, evt):
         if not isinstance(evt, X742Event):
@@ -418,6 +425,17 @@ class X742Driver(DigitizerDriver):
                 ch = g_idx * self.channels_per_group + j
                 if w.size and ch in self.enabled_channels:
                     waveforms[self.enabled_channels.index(ch)] = w
+            # Also capture TR0 (channel index 8 per group) if fast_trigger_digitizing is enabled
+            if self.n_groups > 0 and g_idx < self.n_groups:
+                # TR0 channel index is g_idx * channels_per_group + channels_per_group = g_idx*9+8
+                # But actually the per-group channel 8 is TR0. In the flat enabled_channels,
+                # TR0 would be at position g_idx*channels_per_group + channels_per_group
+                # = g_idx * 9 + 8. For DT5742 with n_groups=2: TR0 for group 0 is channel 16, group 1 is 17
+                tr0_idx = self.n_total + g_idx  # e.g., 16 and 17 for DT5742
+                if tr0_idx in self.enabled_channels:
+                    tr0_wf = np.array(group.data_channel[self.channels_per_group], dtype=np.float32)
+                    if tr0_wf.size:
+                        waveforms[self.enabled_channels.index(tr0_idx)] = tr0_wf
         if not any(w is not None for w in waveforms):
             return None
         return waveforms, scalars

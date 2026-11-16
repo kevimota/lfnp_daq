@@ -252,6 +252,9 @@
         ? dcOffsetCodeToMv(config.dc_offset, digitizerBoardModel(newScan.digitizer_id))
         : 0;
       newScan.channels = config.channels?.length ? config.channels : defaultChannels();
+      newScan.fast_trigger_digitizing = config.fast_trigger_digitizing ?? false;
+      newScan.fast_trigger_threshold = config.fast_trigger_threshold ?? 0x6666;
+      newScan.fast_trigger_dc_offset = config.fast_trigger_dc_offset ?? 0x8000;
       syncJson();
     } catch {}
   }
@@ -276,6 +279,9 @@
               record_length: newScan.record_length,
               post_trigger_size: newScan.post_trigger_size,
               dc_offset_mv: newScan.dc_offset_mv,
+              fast_trigger_digitizing: newScan.fast_trigger_digitizing,
+              fast_trigger_threshold: newScan.fast_trigger_threshold,
+              fast_trigger_dc_offset: newScan.fast_trigger_dc_offset,
               channels: newScan.channels,
             }
           : {}),
@@ -313,6 +319,9 @@
         }
       }
       newScan.dc_offset_mv = parsed.dc_offset_mv ?? newScan.dc_offset_mv;
+      if (parsed.fast_trigger_digitizing != null) newScan.fast_trigger_digitizing = parsed.fast_trigger_digitizing;
+      if (parsed.fast_trigger_threshold != null) newScan.fast_trigger_threshold = parsed.fast_trigger_threshold;
+      if (parsed.fast_trigger_dc_offset != null) newScan.fast_trigger_dc_offset = parsed.fast_trigger_dc_offset;
       if (parsed.channels) newScan.channels = parsed.channels;
       if (newScan.type === 'digitizer_scan' && newScan.channels.length === 0) {
         newScan.channels = defaultChannels();
@@ -330,6 +339,9 @@
         dc_offset: newScan.type === 'digitizer_scan'
           ? dcOffsetMvToCode(newScan.dc_offset_mv, digitizerBoardModel(newScan.digitizer_id))
           : null,
+        fast_trigger_digitizing: newScan.fast_trigger_digitizing,
+        fast_trigger_threshold: newScan.fast_trigger_threshold,
+        fast_trigger_dc_offset: newScan.fast_trigger_dc_offset,
         label: newScan.label || undefined,
         comments: newScan.comments || undefined,
       };

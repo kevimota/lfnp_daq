@@ -48,6 +48,9 @@
     post_trigger_size: number | null;
     dc_offset: number | null;
     channels: DigitizerChannel[] | null;
+    fast_trigger_digitizing: boolean | null;
+    fast_trigger_threshold: number | null;
+    fast_trigger_dc_offset: number | null;
     created_at: string;
   }
 
@@ -251,6 +254,9 @@
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
         : (data.type === 'digitizer_scan' ? defaultChannels() : []);
+      editTriggerModeDigitizing = data.fast_trigger_digitizing ?? true;
+      editTriggerModeThreshold = data.fast_trigger_threshold ?? 0x6666;
+      editTriggerModeDcOffset = data.fast_trigger_dc_offset ?? 0x8000;
       configJson = JSON.stringify(data.voltage_points, null, 2);
     } catch {}
   }
@@ -670,6 +676,9 @@
         editRecordLength = parsed.record_length ?? editRecordLength;
         editPostTriggerSize = parsed.post_trigger_size ?? editPostTriggerSize;
         editDcOffsetMv = parsed.dc_offset_mv ?? editDcOffsetMv;
+        if (parsed.fast_trigger_digitizing != null) editTriggerModeDigitizing = parsed.fast_trigger_digitizing;
+        if (parsed.fast_trigger_threshold != null) editTriggerModeThreshold = parsed.fast_trigger_threshold;
+        if (parsed.fast_trigger_dc_offset != null) editTriggerModeDcOffset = parsed.fast_trigger_dc_offset;
         if (parsed.channels) editChannels = parsed.channels;
         if (editScanType === 'digitizer_scan' && editChannels.length === 0) {
           editChannels = defaultChannels();
@@ -724,6 +733,9 @@
         dc_offset: editScanType === 'digitizer_scan'
           ? dcOffsetMvToCode(editDcOffsetMv, digitizerBoardModel(editDigitizerId))
           : null,
+        fast_trigger_digitizing: editScanType === 'digitizer_scan' ? editTriggerModeDigitizing : null,
+        fast_trigger_threshold: editScanType === 'digitizer_scan' ? editTriggerModeThreshold : null,
+        fast_trigger_dc_offset: editScanType === 'digitizer_scan' ? editTriggerModeDcOffset : null,
         channels: editScanType === 'digitizer_scan' ? editChannels : null,
       };
       const { data } = await api.put(`/daq/configs/${config.id}`, body);
@@ -745,6 +757,9 @@
       editChannels = data.channels?.length
         ? JSON.parse(JSON.stringify(data.channels))
         : (data.type === 'digitizer_scan' ? defaultChannels() : []);
+      editTriggerModeDigitizing = data.fast_trigger_digitizing ?? true;
+      editTriggerModeThreshold = data.fast_trigger_threshold ?? 0x6666;
+      editTriggerModeDcOffset = data.fast_trigger_dc_offset ?? 0x8000;
       editJson = '';
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to update configuration');
