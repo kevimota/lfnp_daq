@@ -282,11 +282,14 @@
     if (!digitizer) return;
 
     const traces: { label: string; data: number[] }[] = [];
+    // Copy arrays out of Svelte's $state proxy: Chart.js needs plain arrays
+    // it can define its own property descriptors on, and Svelte's proxy
+    // rejects that (state_descriptors_fixed).
     for (const [name, arr] of Object.entries(digitizer.channels ?? {})) {
-      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: arr });
+      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: [...arr] as number[] });
     }
     for (const [name, arr] of Object.entries(digitizer.tr0 ?? {})) {
-      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: arr });
+      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: [...arr] as number[] });
     }
     if (traces.length === 0) return;
 
@@ -1249,7 +1252,7 @@
             {/if}
             {#if liveDigitizer !== null}
               <div class="divider my-2"></div>
-              <div class="max-h-96 overflow-x-auto overflow-y-auto rounded-box">
+              <div class="h-[400px] max-h-96 overflow-x-auto overflow-y-auto rounded-box">
                 <canvas id="liveWaveformChart"></canvas>
               </div>
             {/if}
