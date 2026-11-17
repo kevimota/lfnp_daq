@@ -150,7 +150,7 @@ class DigitizerScan(CurrentScanner):
                                 "digitizer": {
                                     "channels": {
                                         f"ch{ch}": (
-                                            self.digitizer._waveforms[-1][i]
+                                            self.digitizer._waveforms[-1][i].tolist()
                                             if i < len(self.digitizer._waveforms) and self.digitizer._waveforms[-1][i] is not None
                                             else None
                                         )
@@ -159,7 +159,7 @@ class DigitizerScan(CurrentScanner):
                                     "tr0": (
                                         {
                                             "tr0_g0": (
-                                                self.digitizer._tr0_waveforms[-1][0]
+                                                self.digitizer._tr0_waveforms[-1][0].tolist()
                                                 if self.digitizer._tr0_waveforms
                                                 and self.digitizer._tr0_waveforms[-1]
                                                 and len(self.digitizer._tr0_waveforms[-1]) > 0
@@ -167,7 +167,7 @@ class DigitizerScan(CurrentScanner):
                                                 else None
                                             ),
                                             "tr0_g1": (
-                                                self.digitizer._tr0_waveforms[-1][1]
+                                                self.digitizer._tr0_waveforms[-1][1].tolist()
                                                 if self.digitizer._tr0_waveforms
                                                 and self.digitizer._tr0_waveforms[-1]
                                                 and len(self.digitizer._tr0_waveforms[-1]) > 1
@@ -207,7 +207,7 @@ class DigitizerScan(CurrentScanner):
                                 "digitizer": {
                                     "channels": {
                                         f"ch{ch}": (
-                                            self.digitizer._waveforms[-1][i]
+                                            self.digitizer._waveforms[-1][i].tolist()
                                             if i < len(self.digitizer._waveforms) and self.digitizer._waveforms[-1][i] is not None
                                             else None
                                         )
@@ -216,7 +216,7 @@ class DigitizerScan(CurrentScanner):
                                     "tr0": (
                                         {
                                             "tr0_g0": (
-                                                self.digitizer._tr0_waveforms[-1][0]
+                                                self.digitizer._tr0_waveforms[-1][0].tolist()
                                                 if self.digitizer._tr0_waveforms
                                                 and self.digitizer._tr0_waveforms[-1]
                                                 and len(self.digitizer._tr0_waveforms[-1]) > 0
@@ -224,7 +224,7 @@ class DigitizerScan(CurrentScanner):
                                                 else None
                                             ),
                                             "tr0_g1": (
-                                                self.digitizer._tr0_waveforms[-1][1]
+                                                self.digitizer._tr0_waveforms[-1][1].tolist()
                                                 if self.digitizer._tr0_waveforms
                                                 and self.digitizer._tr0_waveforms[-1]
                                                 and len(self.digitizer._tr0_waveforms[-1]) > 1
