@@ -151,7 +151,7 @@ class DigitizerScan(CurrentScanner):
                                     "channels": {
                                         f"ch{ch}": (
                                             self.digitizer._waveforms[-1][i].tolist()
-                                            if i < len(self.digitizer._waveforms) and self.digitizer._waveforms[-1][i] is not None
+                                            if self.digitizer._waveforms and self.digitizer._waveforms[-1] and i < len(self.digitizer._waveforms[-1]) and self.digitizer._waveforms[-1][i] is not None
                                             else None
                                         )
                                         for i, ch in enumerate(self.digitizer.enabled_channels)
@@ -208,7 +208,7 @@ class DigitizerScan(CurrentScanner):
                                     "channels": {
                                         f"ch{ch}": (
                                             self.digitizer._waveforms[-1][i].tolist()
-                                            if i < len(self.digitizer._waveforms) and self.digitizer._waveforms[-1][i] is not None
+                                            if self.digitizer._waveforms and self.digitizer._waveforms[-1] and i < len(self.digitizer._waveforms[-1]) and self.digitizer._waveforms[-1][i] is not None
                                             else None
                                         )
                                         for i, ch in enumerate(self.digitizer.enabled_channels)
