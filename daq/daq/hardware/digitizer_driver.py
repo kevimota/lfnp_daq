@@ -294,6 +294,10 @@ class X742Driver(DigitizerDriver):
     default_frequency_hz = 5_000_000_000
     supported_frequencies_hz = list(_DRS4_FREQUENCIES_BY_HZ)
     supports_fast_trigger = True
+    #: TR0 is attenuated by 2 (mezzanine PCB rev >= 1) before the DRS4 and the
+    #: fast-trigger comparator. Extracted TR0 samples are scaled by this factor
+    #: so they are referred to the TR0 connector, like the analog channels.
+    tr0_attenuation = 2
 
     @property
     def n_groups(self) -> int:
@@ -347,14 +351,30 @@ class X742Driver(DigitizerDriver):
         """Optional DRS4 fast-trigger / per-channel DC-offset settings (applied
         only when the config provides them). The DT5742 rejects
         ``set_group_dc_offset`` with FUNCTION_NOT_ALLOWED (verified on hardware),
-        so the DC offset is written per physical channel instead.
+        so the analog-channel DC offset is written per physical channel instead.
 
         Fast-trigger thresholds come from per-group arrays
         ``fast_trigger_thresholds`` / ``fast_trigger_dc_offsets`` (one entry per
-        acquisition group). DC offset defaults to ``cfg["dc_offset"]`` when the
-        per-group arrays are absent. ``fast_trigger_digitizing`` toggles TR0
-        digitization (written into data readout, not used as a trigger)."""
-        # Per-group DC offsets and thresholds from arrays
+        acquisition group). They configure the TR0 input itself: the comparator
+        threshold and the TR0 DC offset (the offset DAC sits after the TR0 input
+        attenuator). On the DT5742, TR0 is common to groups 0 and 1, so both
+        entries refer to the same TR0 input; the last write wins if they differ.
+        The separate ``dc_offset`` key is the analog-channel baseline and is
+        applied to every enabled channel.
+        ``fast_trigger_digitizing`` toggles TR0 digitization (written into data
+        readout, not used as a trigger)."""
+        # Warn if this mezzanine is rev 0: the mV conversions in the UI assume
+        # rev >= 1 (TR0 attenuation 2, not 3).
+        try:
+            status = self._caen_call(dev.read_register, 0x1088)
+            if not (int(status) >> 9) & 1:
+                _LOG.warning(
+                    "DT5742: mezzanine PCB revision 0 detected; TR0 mV "
+                    "conversions assume revision >= 1 (attenuation 2, not 3)"
+                )
+        except Exception as e:
+            _LOG.debug("DT5742: mezzanine PCB revision read failed (%s)", e)
+
         fast_thresholds = cfg.get("fast_trigger_thresholds") or []
         fast_dc_offsets = cfg.get("fast_trigger_dc_offsets") or []
         n_groups = min(len(fast_thresholds), len(fast_dc_offsets), self.n_groups)
@@ -369,22 +389,32 @@ class X742Driver(DigitizerDriver):
                     int(thresh),
                 )
             if dc_off is not None:
-                code = int(dc_off)
-                for ch in self.enabled_channels:
-                    if (
-                        g * self.channels_per_group
-                        <= ch
-                        < (g + 1) * self.channels_per_group
-                    ):
-                        self._caen_call(dev.set_channel_dc_offset, ch, code)
+                self._caen_call(
+                    dev.set_group_fast_trigger_dc_offset,
+                    g,
+                    int(dc_off),
+                )
+                try:
+                    readback = int(
+                        self._caen_call(dev.get_group_fast_trigger_dc_offset, g)
+                    )
+                    _LOG.info(
+                        "DT5742: TR0 DC offset group %d set to 0x%04X (%d), "
+                        "readback 0x%04X (%d)",
+                        g,
+                        int(dc_off),
+                        int(dc_off),
+                        readback,
+                        readback,
+                    )
+                except Exception as e:
+                    _LOG.debug("DT5742: TR0 DC offset readback failed (%s)", e)
 
-        # Fallback: global dc_offset for channels not covered by per-group arrays
+        # Analog-channel baseline, independent of the TR0 fast-trigger offset.
         offset = cfg.get("dc_offset")
         if offset is not None:
             code = int(offset)
             for ch in self.enabled_channels:
-                if ch < n_groups * self.channels_per_group:
-                    continue  # already set by per-group array above
                 self._caen_call(dev.set_channel_dc_offset, ch, code)
 
         if cfg.get("fast_trigger_digitizing") is not None:
@@ -400,7 +430,9 @@ class X742Driver(DigitizerDriver):
         list with one entry per acquisition group (``None`` when the group is
         absent or TR0 digitizing is disabled), read from the per-group TR0
         channel (index ``channels_per_group``) whenever
-        ``fast_trigger_digitizing`` is enabled.
+        ``fast_trigger_digitizing`` is enabled. TR0 samples are scaled by
+        ``tr0_attenuation`` so they are referred to the TR0 connector (the
+        input is attenuated before the DRS4), matching the analog channels.
         """
         if not isinstance(evt, X742Event):
             return None
@@ -438,7 +470,8 @@ class X742Driver(DigitizerDriver):
                         data_channel[self.channels_per_group], dtype=np.float32
                     )
                     if tr0_wf.size:
-                        tr0_waveforms[g_idx] = tr0_wf
+                        # Refer the attenuated TR0 samples to the connector.
+                        tr0_waveforms[g_idx] = tr0_wf * self.tr0_attenuation
         if not any(w is not None for w in waveforms):
             return None
         return waveforms, scalars, tr0_waveforms

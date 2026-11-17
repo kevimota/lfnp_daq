@@ -252,6 +252,17 @@ def _validate_scan_params(req: RunCreateRequest, session) -> None:
                 detail="post_trigger_size must be a percentage 0-100",
             )
 
+        for field_name in ("fast_trigger_threshold", "fast_trigger_dc_offset"):
+            value = getattr(req, field_name)
+            if value is not None and not (0 <= int(value) <= 0xFFFF):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{field_name} must be a 16-bit DAC value 0-65535, "
+                        f"got {value}"
+                    ),
+                )
+
         if req.channels:
             n_channels = _DIGITIZER_CHANNEL_COUNTS[board_model]
             for ch in req.channels:

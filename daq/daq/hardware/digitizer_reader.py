@@ -257,6 +257,7 @@ class DigitizerScanner:
         self.calibrated = driver.calibrated
         self.sampling_frequency_hz = float(self.driver._resolved_frequency_hz or 0.0)
         self.supports_fast_trigger = getattr(self.driver, "supports_fast_trigger", False)
+        self.tr0_attenuation = int(getattr(self.driver, "tr0_attenuation", 1))
 
         self._trace("malloc_readout_buffer")
         readout_size = dev.malloc_readout_buffer()
@@ -745,6 +746,12 @@ class DigitizerScanner:
             "trigger_sources": self._trigger_mode,
             "trigger_source_attribution": "mixed",
             "input_range_vpp": float(self.input_range_vpp or 0.0),
+            "tr0_attenuation": int(self.tr0_attenuation),
+            "tr0_input_range_vpp": (
+                float(self.tr0_attenuation * (self.input_range_vpp or 0.0))
+                if self.supports_fast_trigger
+                else 0.0
+            ),
             "dc_offset": int(self.dc_offset or 0),
             "sampling_frequency_hz": float(self.sampling_frequency_hz or 0.0),
             "dc_offset_v": (

@@ -71,7 +71,9 @@
     channels: [] as DigitizerChannel[],
     fast_trigger_digitizing: true,
     fast_trigger_threshold: 0x6666,
+    fast_trigger_threshold_mv: 0,
     fast_trigger_dc_offset: 0x8000,
+    fast_trigger_dc_offset_mv: 0,
   });
 
   // Valid scan configuration for each supported digitizer board model:
@@ -150,6 +152,79 @@
   function dcOffsetCodeToMv(code: number, boardModel: number): number {
     const half = dcOffsetHalfScaleMv(boardModel);
     return Math.round(((code - 0x8000) * half) / 0x8000);
+  }
+
+  // DT5742 TR0 (fast trigger) conversions. The mezzanine PCB is assumed to be
+  // rev >= 1: the TR0 input is attenuated by 2 before the DRS4/comparator.
+  // Threshold: 13.2 DAC counts per mV at the TR0 connector (DT5742 manual
+  // section 9.8.3, 0x6666 = 0 mV). DC offset: 0x8000 = 0 mV, +/-2000 mV at the
+  // connector because the offset DAC is after the /2 attenuator.
+  const TR0_THRESHOLD_MV_TO_CODE = 13.2;
+  const TR0_DC_OFFSET_HALF_SCALE_MV = 2000;
+
+  function tr0ThresholdMvToCode(mv: number): number {
+    return Math.max(0, Math.min(0xffff, Math.round(0x6666 + mv * TR0_THRESHOLD_MV_TO_CODE)));
+  }
+
+  function tr0ThresholdCodeToMv(code: number): number {
+    return Math.round((code - 0x6666) / TR0_THRESHOLD_MV_TO_CODE);
+  }
+
+  function tr0DcOffsetMvToCode(mv: number): number {
+    return Math.max(0, Math.min(0xffff, Math.round(0x8000 + (mv / TR0_DC_OFFSET_HALF_SCALE_MV) * 0x8000)));
+  }
+
+  function tr0DcOffsetCodeToMv(code: number): number {
+    return Math.round(((code - 0x8000) * TR0_DC_OFFSET_HALF_SCALE_MV) / 0x8000);
+  }
+
+  function formatDacCode(code: number): string {
+    return `0x${code.toString(16).toUpperCase()} (${code})`;
+  }
+
+  type Tr0Preset = {
+    id: string;
+    label: string;
+    offsetCode: number;
+    thresholdCode: number;
+    offsetMv: number;
+    thresholdMv: number;
+  };
+
+  // DT5742 manual Table 9.1 (mezzanine PCB rev >= 1). Codes are the manual's
+  // exact values; the mV values are their connector-referred equivalents.
+  const TR0_PRESETS: Tr0Preset[] = [
+    { id: 'ecl', label: 'ECL', offsetCode: 0x55A0, thresholdCode: 0x6666, offsetMv: -662, thresholdMv: 0 },
+    { id: 'nim', label: 'NIM (0 to -800 mV)', offsetCode: 0x8000, thresholdCode: 0x51C6, offsetMv: 0, thresholdMv: -400 },
+    { id: 'neg400', label: 'Negative 0 to -400 mV', offsetCode: 0x8000, thresholdCode: 0x5C16, offsetMv: 0, thresholdMv: -200 },
+    { id: 'neg200', label: 'Negative 0 to -200 mV', offsetCode: 0x8000, thresholdCode: 0x613E, offsetMv: 0, thresholdMv: -100 },
+    { id: 'bipolar', label: 'Bipolar', offsetCode: 0x8000, thresholdCode: 0x6666, offsetMv: 0, thresholdMv: 0 },
+    { id: 'ttl', label: 'TTL / Positive >= 2 V', offsetCode: 0xA800, thresholdCode: 0x6666, offsetMv: 625, thresholdMv: 0 },
+    { id: 'pos2', label: 'Positive 0 to 2 V', offsetCode: 0x91A7, thresholdCode: 0x6666, offsetMv: 276, thresholdMv: 0 },
+  ];
+
+  let tr0PresetOpen = $state(false);
+
+  function applyTr0Preset(preset: Tr0Preset) {
+    newScan.fast_trigger_threshold = preset.thresholdCode;
+    newScan.fast_trigger_threshold_mv = preset.thresholdMv;
+    newScan.fast_trigger_dc_offset = preset.offsetCode;
+    newScan.fast_trigger_dc_offset_mv = preset.offsetMv;
+    tr0PresetOpen = false;
+  }
+
+  function onTr0ThresholdMvInput(raw: string) {
+    const mv = Number(raw);
+    if (!Number.isFinite(mv)) return;
+    newScan.fast_trigger_threshold_mv = mv;
+    newScan.fast_trigger_threshold = tr0ThresholdMvToCode(mv);
+  }
+
+  function onTr0DcOffsetMvInput(raw: string) {
+    const mv = Number(raw);
+    if (!Number.isFinite(mv)) return;
+    newScan.fast_trigger_dc_offset_mv = mv;
+    newScan.fast_trigger_dc_offset = tr0DcOffsetMvToCode(mv);
   }
 
   function digitizerBoardModel(id: number | null): number {
@@ -254,7 +329,9 @@
       newScan.channels = config.channels?.length ? config.channels : defaultChannels();
       newScan.fast_trigger_digitizing = config.fast_trigger_digitizing ?? false;
       newScan.fast_trigger_threshold = config.fast_trigger_threshold ?? 0x6666;
+      newScan.fast_trigger_threshold_mv = tr0ThresholdCodeToMv(newScan.fast_trigger_threshold);
       newScan.fast_trigger_dc_offset = config.fast_trigger_dc_offset ?? 0x8000;
+      newScan.fast_trigger_dc_offset_mv = tr0DcOffsetCodeToMv(newScan.fast_trigger_dc_offset);
       syncJson();
     } catch {}
   }
@@ -281,7 +358,9 @@
               dc_offset_mv: newScan.dc_offset_mv,
               fast_trigger_digitizing: newScan.fast_trigger_digitizing,
               fast_trigger_threshold: newScan.fast_trigger_threshold,
+              fast_trigger_threshold_mv: newScan.fast_trigger_threshold_mv,
               fast_trigger_dc_offset: newScan.fast_trigger_dc_offset,
+              fast_trigger_dc_offset_mv: newScan.fast_trigger_dc_offset_mv,
               channels: newScan.channels,
             }
           : {}),
@@ -320,8 +399,20 @@
       }
       newScan.dc_offset_mv = parsed.dc_offset_mv ?? newScan.dc_offset_mv;
       if (parsed.fast_trigger_digitizing != null) newScan.fast_trigger_digitizing = parsed.fast_trigger_digitizing;
-      if (parsed.fast_trigger_threshold != null) newScan.fast_trigger_threshold = parsed.fast_trigger_threshold;
-      if (parsed.fast_trigger_dc_offset != null) newScan.fast_trigger_dc_offset = parsed.fast_trigger_dc_offset;
+      if (parsed.fast_trigger_threshold_mv != null) {
+        newScan.fast_trigger_threshold_mv = parsed.fast_trigger_threshold_mv;
+        newScan.fast_trigger_threshold = tr0ThresholdMvToCode(newScan.fast_trigger_threshold_mv);
+      } else if (parsed.fast_trigger_threshold != null) {
+        newScan.fast_trigger_threshold = parsed.fast_trigger_threshold;
+        newScan.fast_trigger_threshold_mv = tr0ThresholdCodeToMv(newScan.fast_trigger_threshold);
+      }
+      if (parsed.fast_trigger_dc_offset_mv != null) {
+        newScan.fast_trigger_dc_offset_mv = parsed.fast_trigger_dc_offset_mv;
+        newScan.fast_trigger_dc_offset = tr0DcOffsetMvToCode(newScan.fast_trigger_dc_offset_mv);
+      } else if (parsed.fast_trigger_dc_offset != null) {
+        newScan.fast_trigger_dc_offset = parsed.fast_trigger_dc_offset;
+        newScan.fast_trigger_dc_offset_mv = tr0DcOffsetCodeToMv(newScan.fast_trigger_dc_offset);
+      }
       if (parsed.channels) newScan.channels = parsed.channels;
       if (newScan.type === 'digitizer_scan' && newScan.channels.length === 0) {
         newScan.channels = defaultChannels();
@@ -346,6 +437,8 @@
         comments: newScan.comments || undefined,
       };
       delete (payload as any).dc_offset_mv;
+      delete (payload as any).fast_trigger_threshold_mv;
+      delete (payload as any).fast_trigger_dc_offset_mv;
       await api.post('/daq/runs', payload);
       showNewModal = false;
       await fetchRuns();
@@ -379,10 +472,13 @@
       channels: [] as DigitizerChannel[],
       fast_trigger_digitizing: false,
       fast_trigger_threshold: 0x6666,
+      fast_trigger_threshold_mv: 0,
       fast_trigger_dc_offset: 0x8000,
+      fast_trigger_dc_offset_mv: 0,
     };
     jsonConfig = '';
     useJsonEditor = false;
+    tr0PresetOpen = false;
   }
 
   function resetList() {
@@ -684,17 +780,45 @@
                       <option value={true}>Yes</option>
                     </select>
                   </label>
+                  <div class="form-control w-full">
+                    <span class="label-text">TR0 presets (DT5742 manual Table 9.1)</span>
+                    <details class="dropdown" bind:open={tr0PresetOpen}>
+                      <summary class="btn btn-sm btn-outline">Apply preset</summary>
+                      <ul class="dropdown-content menu bg-base-100 rounded-box z-10 w-80 p-2 shadow">
+                        {#each TR0_PRESETS as preset}
+                          <li>
+                            <button type="button" onclick={() => applyTr0Preset(preset)}>
+                              <span class="flex flex-col items-start">
+                                <span>{preset.label}</span>
+                                <span class="text-xs opacity-60">
+                                  offset {preset.offsetMv} mV · threshold {preset.thresholdMv} mV
+                                </span>
+                              </span>
+                            </button>
+                          </li>
+                        {/each}
+                      </ul>
+                    </details>
+                  </div>
                   <label class="form-control w-full">
-                    <span class="label-text">Fast Trigger Threshold (DAC code, 0-65535)</span>
-                    <input type="number" min="0" max="65535" class="input input-bordered"
-                      bind:value={newScan.fast_trigger_threshold} />
+                    <span class="label-text">TR0 Threshold (mV, approx.)</span>
+                    <input type="number" min="-2000" max="3000" step="1" class="input input-bordered"
+                      value={newScan.fast_trigger_threshold_mv}
+                      oninput={(e) => onTr0ThresholdMvInput(e.currentTarget.value)} />
+                    <span class="label-text-alt">= {formatDacCode(newScan.fast_trigger_threshold)}</span>
                   </label>
                   <label class="form-control w-full">
-                    <span class="label-text">Fast Trigger DC Offset (DAC code, 0-65535)</span>
-                    <input type="number" min="0" max="65535" class="input input-bordered"
-                      bind:value={newScan.fast_trigger_dc_offset} />
+                    <span class="label-text">TR0 DC Offset (mV)</span>
+                    <input type="number" min="-2000" max="2000" step="1" class="input input-bordered"
+                      value={newScan.fast_trigger_dc_offset_mv}
+                      oninput={(e) => onTr0DcOffsetMvInput(e.currentTarget.value)} />
+                    <span class="label-text-alt">= {formatDacCode(newScan.fast_trigger_dc_offset)}</span>
                   </label>
                 </div>
+                <p class="text-xs opacity-60 mt-2">
+                  Mezzanine PCB rev ≥ 1: TR0 input ±2000 mV, threshold 0x6666 = 0 mV.
+                  For signals above 2 Vpp, CAEN recommends an external attenuator.
+                </p>
               </div>
             {/if}
           {/if}
