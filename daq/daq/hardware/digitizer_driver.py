@@ -129,6 +129,10 @@ class DigitizerDriver(ABC):
         self.calibrated = False
         self._resolved_frequency_hz = self.default_frequency_hz or 0
         self.fast_trigger_digitizing = False
+        #: Per-group TR0 readback values (populated by configure_triggers) so
+        #: the run metadata records what the board actually accepted.
+        self.fast_trigger_thresholds: list[int] = []
+        self.fast_trigger_dc_offsets: list[int] = []
 
     @property
     def model(self) -> BoardModel:
@@ -379,6 +383,9 @@ class X742Driver(DigitizerDriver):
         fast_dc_offsets = cfg.get("fast_trigger_dc_offsets") or []
         n_groups = min(len(fast_thresholds), len(fast_dc_offsets), self.n_groups)
 
+        self.fast_trigger_thresholds = []
+        self.fast_trigger_dc_offsets = []
+
         for g in range(n_groups):
             thresh = fast_thresholds[g]
             dc_off = fast_dc_offsets[g]
@@ -388,6 +395,29 @@ class X742Driver(DigitizerDriver):
                     g,
                     int(thresh),
                 )
+                try:
+                    readback = int(
+                        self._caen_call(dev.get_group_fast_trigger_threshold, g)
+                    )
+                    self.fast_trigger_thresholds.append(readback)
+                    _LOG.info(
+                        "DT5742: TR0 threshold group %d set to 0x%04X (%d), "
+                        "readback 0x%04X (%d)",
+                        g,
+                        int(thresh),
+                        int(thresh),
+                        readback,
+                        readback,
+                    )
+                except Exception as e:
+                    self.fast_trigger_thresholds.append(int(thresh))
+                    _LOG.warning(
+                        "DT5742: TR0 threshold group %d readback failed (%s); "
+                        "assuming requested 0x%04X",
+                        g,
+                        e,
+                        int(thresh),
+                    )
             if dc_off is not None:
                 self._caen_call(
                     dev.set_group_fast_trigger_dc_offset,
@@ -398,6 +428,7 @@ class X742Driver(DigitizerDriver):
                     readback = int(
                         self._caen_call(dev.get_group_fast_trigger_dc_offset, g)
                     )
+                    self.fast_trigger_dc_offsets.append(readback)
                     _LOG.info(
                         "DT5742: TR0 DC offset group %d set to 0x%04X (%d), "
                         "readback 0x%04X (%d)",
@@ -408,7 +439,14 @@ class X742Driver(DigitizerDriver):
                         readback,
                     )
                 except Exception as e:
-                    _LOG.debug("DT5742: TR0 DC offset readback failed (%s)", e)
+                    self.fast_trigger_dc_offsets.append(int(dc_off))
+                    _LOG.warning(
+                        "DT5742: TR0 DC offset group %d readback failed (%s); "
+                        "assuming requested 0x%04X",
+                        g,
+                        e,
+                        int(dc_off),
+                    )
 
         # Analog-channel baseline, independent of the TR0 fast-trigger offset.
         offset = cfg.get("dc_offset")
@@ -422,6 +460,15 @@ class X742Driver(DigitizerDriver):
             self._caen_call(
                 dev.set_fast_trigger_digitizing, EnaDis(cfg["fast_trigger_digitizing"])
             )
+            try:
+                readback = dev.get_fast_trigger_digitizing()
+                _LOG.info(
+                    "DT5742: TR0 digitizing set to %s, readback %s",
+                    "ON" if self.fast_trigger_digitizing else "OFF",
+                    readback,
+                )
+            except Exception as e:
+                _LOG.warning("DT5742: TR0 digitizing readback failed (%s)", e)
 
     def extract(self, evt):
         """Return (waveforms, scalars, tr0_waveforms) or None.

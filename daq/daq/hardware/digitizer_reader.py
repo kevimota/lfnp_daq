@@ -15,6 +15,7 @@ from caen_libs.caendigitizer import (
     AcqMode,
     Device,
     Error,
+    IOLevel,
     ReadMode,
     TriggerMode,
 )
@@ -44,6 +45,20 @@ _LOG = logging.getLogger("daq.digitizer")
 
 _STALL_LOG_SECONDS = 30.0
 _MILESTONE_STEPS = 20  # log collected/target progress ~MILESTONE_STEPS times per point
+
+#: Trigger-mode combinations each board supports.
+_ALLOWED_TRIGGER_MODES = {
+    18: {"random", "external", "fast", "random-external", "random-fast"},
+    27: {"random", "external", "random-external"},
+}
+
+#: Human-readable names for the CAEN trigger-mode enum (logs / ROOT meta).
+_TRIGGER_MODE_NAMES = {
+    TriggerMode.DISABLED: "DISABLED",
+    TriggerMode.ACQ_ONLY: "ACQ_ONLY",
+    TriggerMode.EXTOUT_ONLY: "EXTOUT_ONLY",
+    TriggerMode.ACQ_AND_EXTOUT: "ACQ_AND_EXTOUT",
+}
 
 
 class DigitizerScanner:
@@ -78,6 +93,10 @@ class DigitizerScanner:
         self.dc_offset: Optional[int] = None
         self.calibrated = False
         self.supports_fast_trigger = False
+        #: Verified trigger-source state and effective post-trigger position
+        #: (populated by _do_configure, written to the ROOT metadata).
+        self._trigger_state: dict[str, str] = {}
+        self._post_trigger_size = 0
 
         # CAEN calls are synchronous and can block for a long time (optical/USB
         # I/O, decode, ROOT writes). Run them on a dedicated single worker thread
@@ -215,15 +234,18 @@ class DigitizerScanner:
 
         # ── Determine trigger mode from config ──
         self._trigger_mode = cfg.get("trigger_mode", "random")
-        # Simultaneous mode: enable all selected sources.
-        #   "random"  → software periodic triggers
-        #   "external" → front-panel trigger input
-        #   "fast"   → TR0 fast trigger
-        #   "random-external"  → both random SW and external
-        #   "random-fast"        → both random SW and TR0
-        # All selected sources are hardware-ORed; every event gets trigger_source="mixed".
-        self._enable_simultaneous_triggers(cfg)
 
+        # Verify allowed trigger_mode for the board before proceeding.
+        board_model = int(self.info.model)
+        allowed = _ALLOWED_TRIGGER_MODES.get(board_model, set())
+        if self._trigger_mode not in allowed:
+            raise ValueError(
+                f"DT{board_model}: trigger_mode '{self._trigger_mode}' not allowed. "
+                f"Allowed: {sorted(allowed)}"
+            )
+
+        # Load driver once to check capabilities and ensure trigger setup
+        # happens only after the driver has initialized its registers.
         driver = self.driver
 
         # Board-specific configuration: enable mask, post-trigger size,
@@ -232,6 +254,14 @@ class DigitizerScanner:
         # are never mixed across boards.
         driver.configure(dev, cfg)
         self.enabled_channels = list(driver.enabled_channels)
+
+        # Now enable the trigger sources *after* all board registers are
+        # configured, including TR0 threshold/offset/digitizing. This ordering
+        # eliminates the enable-before-threshold bug.
+        self._enable_simultaneous_triggers(dev, cfg)
+
+        # ── Read back and verify trigger state ──
+        self._verify_trigger_state(dev)
 
         # Shared setup: acquisition mode (software-controlled, required for the
         # SendSWtrigger -> ReadData pattern) and a modest max-events-per-BLT so
@@ -279,11 +309,13 @@ class DigitizerScanner:
         )
         return self.enabled_channels
 
-    def _enable_simultaneous_triggers(self, cfg: dict):
+    def _enable_simultaneous_triggers(self, dev, cfg: dict):
         """Configure the trigger hardware for simultaneous mode.
 
-        Enable all selected trigger sources (random SW, external, fast/TR0)
-        so they are OR'd together. The trigger_mode string encodes the combo.
+        Reset all trigger sources to DISABLED first, then enable only the ones
+        implied by trigger_mode. Any failure is logged (no silent swallow) so
+        configure() can raise instead of starting a run with the wrong trigger.
+        The trigger_mode string encodes the combo.
 
         Rules per board:
           DT5742: random, external, fast, random-external, random-fast
@@ -292,61 +324,190 @@ class DigitizerScanner:
         board_model = int(self.info.model)
         trigger_mode = self._trigger_mode
 
-        # Validate allowed combos for the board
-        _ALLOWED_TRIGGER_MODES = {
-            18: {"random", "external", "fast", "random-external", "random-fast"},
-            27: {"random", "external", "random-external"},
-        }
-        allowed = _ALLOWED_TRIGGER_MODES.get(board_model, set())
-        if trigger_mode not in allowed:
-            raise ValueError(
-                f"DT{board_model}: trigger_mode '{trigger_mode}' not allowed. "
-                f"Allowed: {sorted(allowed)}"
-            )
-
         # Determine which trigger paths to enable
         has_random = trigger_mode in ("random",) or "random" in trigger_mode
         has_external = trigger_mode in ("external",) or "external" in trigger_mode
         has_fast = trigger_mode in ("fast",) or "fast" in trigger_mode
 
-        # Reset all trigger paths first (disable everything)
+        # ── Reset ALL sources unconditionally (no try/except swallow) ──
+
         # External trigger input mode
         try:
             dev.set_ext_trigger_input_mode(TriggerMode.DISABLED)
-        except Exception:
-            pass
+            _LOG.info("DT5742: ext trigger mode -> DISABLED")
+        except Exception as e:
+            _LOG.warning("DT5742: failed to set ext trigger mode DISABLED (%s)", e)
 
-        # Disable internal SW trigger if it was on
+        # Disable internal SW trigger
         try:
             dev.set_sw_trigger_mode(TriggerMode.DISABLED)
-        except Exception:
-            pass
+            _LOG.info("DT5742: sw trigger mode -> DISABLED")
+        except Exception as e:
+            _LOG.warning("DT5742: failed to set sw trigger mode DISABLED (%s)", e)
 
-        # Enable the selected paths
+        # Fast/TR0 trigger mode
+        try:
+            dev.set_fast_trigger_mode(TriggerMode.DISABLED)
+            _LOG.info("DT5742: fast trigger mode -> DISABLED")
+        except Exception as e:
+            _LOG.warning("DT5742: failed to set fast trigger mode DISABLED (%s)", e)
+
+        # ── Enable only the selected sources ──
+
         if has_random:
             # Software trigger is always enabled when random is part of the combo;
             # periodic SendSWtrigger is driven from _do_step based on trigger_frequency_hz
             try:
                 dev.set_sw_trigger_mode(TriggerMode.ACQ_ONLY)
-            except Exception:
-                pass
+                _LOG.info("DT5742: sw trigger mode -> ACQ_ONLY")
+            except Exception as e:
+                _LOG.warning("DT5742: failed to set sw trigger mode ACQ_ONLY (%s)", e)
 
         if has_external:
             # External trigger input mode
             try:
                 dev.set_ext_trigger_input_mode(TriggerMode.ACQ_ONLY)
-            except Exception:
-                pass
+                _LOG.info("DT5742: ext trigger mode -> ACQ_ONLY")
+            except Exception as e:
+                _LOG.warning("DT5742: failed to set ext trigger mode ACQ_ONLY (%s)", e)
+            # Ensure NIM I/O level for external trigger
+            try:
+                dev.set_io_level(IOLevel.NIM)
+                _LOG.info("DT5742: I/O level set to NIM")
+            except Exception as e:
+                _LOG.warning("DT5742: failed to set I/O level to NIM (%s)", e)
 
-        if has_fast and board_model == 18 and self.supports_fast_trigger:
+        if has_fast and board_model == 18:
             # TR0 fast trigger is enabled - the comparator will fire when TR0
             # crosses the configured threshold. Digitization is controlled separately
             # by fast_trigger_digitizing in the cfg passed to driver.configure().
             try:
-                # Ensure TR0 threshold from config is applied (driver.configure_triggers already did this)
                 dev.set_fast_trigger_mode(TriggerMode.ACQ_ONLY)
-            except Exception:
-                pass
+                _LOG.info("DT5742: fast trigger mode -> ACQ_ONLY")
+            except Exception as e:
+                _LOG.warning("DT5742: failed to set fast trigger mode ACQ_ONLY (%s)", e)
+
+    @staticmethod
+    def _desired_trigger_state(trigger_mode: str, board_model: int) -> dict:
+        """Resolve the expected enable state of every trigger source for a
+        trigger_mode string. Single source of truth for both enabling and
+        verification: anything not selected must be DISABLED."""
+        has_random = "random" in trigger_mode
+        has_external = "external" in trigger_mode
+        has_fast = "fast" in trigger_mode and board_model == 18
+        return {
+            "ext": TriggerMode.ACQ_ONLY if has_external else TriggerMode.DISABLED,
+            "sw": TriggerMode.ACQ_ONLY if has_random else TriggerMode.DISABLED,
+            "fast": TriggerMode.ACQ_ONLY if has_fast else TriggerMode.DISABLED,
+        }
+
+    def _verify_trigger_state(self, dev):
+        """Read every trigger-source mode back from the board, compare it to
+        what trigger_mode requires, and raise if they disagree. Also records
+        the effective post-trigger, I/O level, self-trigger state and TR0
+        settings for the run metadata. A run that cannot prove its trigger
+        sources must not start, so a mismatch raises RuntimeError."""
+        board_model = int(self.info.model)
+        desired = self._desired_trigger_state(self._trigger_mode, board_model)
+
+        def _read(fn):
+            try:
+                return fn()
+            except Exception as e:  # a getter failing is itself a problem
+                _LOG.warning("trigger readback call %s failed (%s)",
+                             getattr(fn, "__name__", fn), e)
+                return None
+
+        actual = {
+            "ext": _read(dev.get_ext_trigger_input_mode),
+            "sw": _read(dev.get_sw_trigger_mode),
+        }
+        if board_model == 18:
+            actual["fast"] = _read(dev.get_fast_trigger_mode)
+        else:
+            actual["fast"] = TriggerMode.DISABLED
+
+        # Post-trigger / IO level / TR0 digitizing (diagnostic, not a mismatch).
+        self._post_trigger_size = _read(dev.get_post_trigger_size) or 0
+        io_level = _read(dev.get_io_level)
+        digitizing = getattr(self.driver, "fast_trigger_digitizing", False)
+        if io_level is None:
+            _LOG.warning("DT5742: failed to read I/O level")
+            io_level_str = "UNKNOWN"
+        else:
+            io_level_str = "NIM" if io_level == IOLevel.NIM else (
+                "TTL" if io_level == IOLevel.TTL else str(io_level)
+            )
+
+        # Self-trigger state (diagnostic only; not forced, because DT5742
+        # requires individual trigger, and DT5743 legitimately uses it).
+        ch_self = 0
+        grp_self = 0
+        if board_model == 18:
+            try:
+                ch_self = int(dev.get_channel_self_trigger(0))
+            except Exception as e:
+                _LOG.debug("channel self-trigger readback failed (%s)", e)
+        else:
+            try:
+                grp_self = int(dev.get_group_self_trigger(0))
+            except Exception as e:
+                _LOG.debug("group self-trigger readback failed (%s)", e)
+
+        # ── Compare and raise on mismatch ──
+        problems: list[str] = []
+        for key in ("ext", "sw", "fast"):
+            got = actual.get(key)
+            want = desired[key]
+            if got != want:
+                problems.append(
+                    f"{key} trigger: wanted {_TRIGGER_MODE_NAMES.get(want, want)}, "
+                    f"got {_TRIGGER_MODE_NAMES.get(got, got)}"
+                )
+        if problems:
+            raise RuntimeError(
+                "trigger source verification failed for mode "
+                f"'{self._trigger_mode}': " + "; ".join(problems)
+            )
+
+        self._trigger_state = {
+            "ext": _TRIGGER_MODE_NAMES.get(actual["ext"], str(actual["ext"])),
+            "sw": _TRIGGER_MODE_NAMES.get(actual["sw"], str(actual["sw"])),
+            "fast": _TRIGGER_MODE_NAMES.get(actual["fast"], str(actual["fast"])),
+            "io_level": io_level_str,
+            "post_trigger_size": str(int(self._post_trigger_size)),
+            "ch_self_trigger": f"0x{ch_self:04X}",
+            "grp_self_trigger": f"0x{grp_self:04X}",
+            "digitizing": "ON" if digitizing else "OFF",
+            "thresholds": [
+                f"0x{v:04X}" for v in (self.driver.fast_trigger_thresholds or [])
+            ],
+            "dc_offsets": [
+                f"0x{v:04X}" for v in (self.driver.fast_trigger_dc_offsets or [])
+            ],
+        }
+
+        if (ch_self or grp_self) and board_model == 27:
+            _LOG.warning(
+                "trigger self-trigger state unexpected: ch=0x%04X grp=0x%04X",
+                ch_self, grp_self,
+            )
+
+        _LOG.info(
+            "trigger state verified: ext=%s sw=%s fast=%s ch_self=0x%04X "
+            "grp_self=0x%04X io=%s post=%s digitizing=%s thresholds=%s "
+            "dc_offsets=%s",
+            self._trigger_state["ext"],
+            self._trigger_state["sw"],
+            self._trigger_state["fast"],
+            ch_self,
+            grp_self,
+            self._trigger_state["io_level"],
+            self._trigger_state["post_trigger_size"],
+            self._trigger_state["digitizing"],
+            self._trigger_state["thresholds"],
+            self._trigger_state["dc_offsets"],
+        )
 
     async def configure(self, cfg: dict):
         return await self._run(self._do_configure, cfg)
@@ -737,6 +898,16 @@ class DigitizerScanner:
             "record_length": int(rec_len),
             "trigger_mode": self._trigger_mode,
             "trigger_source_mode": "simultaneous",
+            "trigger_ext_mode": self._trigger_state.get("ext", ""),
+            "trigger_sw_mode": self._trigger_state.get("sw", ""),
+            "trigger_fast_mode": self._trigger_state.get("fast", ""),
+            "trigger_io_level": self._trigger_state.get("io_level", ""),
+            "trigger_post_trigger_size": self._trigger_state.get("post_trigger_size", ""),
+            "trigger_ch_self_trigger": self._trigger_state.get("ch_self_trigger", ""),
+            "trigger_grp_self_trigger": self._trigger_state.get("grp_self_trigger", ""),
+            "trigger_fast_digitizing": self._trigger_state.get("digitizing", ""),
+            "trigger_fast_thresholds": self._trigger_state.get("thresholds", []),
+            "trigger_fast_dc_offsets": self._trigger_state.get("dc_offsets", []),
             "number_of_triggers": int(self._target),
             "physical_collected": int(self._physical_collected),
             "random_collected": int(self._random_collected),
