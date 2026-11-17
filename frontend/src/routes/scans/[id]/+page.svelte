@@ -14,6 +14,7 @@
     ListChecks,
     X,
   } from '@lucide/svelte';
+  import Chart from 'chart.js/auto';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
   import { goto } from '$app/navigation';
@@ -102,9 +103,15 @@
   }
 
   interface LiveScanMessage {
-    type: 'current_scan';
+    type: 'current_scan' | 'digitizer_scan';
     point: number;
-    data: ChannelReading[];
+    data: ChannelReading[] | {
+      power: ChannelReading[];
+      digitizer: {
+        channels: Record<string, number[]>;
+        tr0?: { tr0_g0: number[]; tr0_g1: number[] };
+      };
+    };
     triggers?: number;
     target?: number;
     random_triggers?: number;
@@ -189,9 +196,23 @@
   let pointsModalOpen = $state(false);
   let selectedPoints: number[] = $state([]);
   let liveOpen = $state(true);
+  let waveformChart: Chart | null = null;
 
   const runId = $derived(Number(page.params.id));
   const latestLive = $derived(liveData.at(-1) ?? null);
+  const liveReadings = $derived.by(() => {
+    const msg = latestLive;
+    if (!msg) return [];
+    if (Array.isArray(msg.data)) return msg.data;
+    return Array.isArray(msg.data?.power) ? msg.data.power : [];
+  });
+  const liveDigitizer = $derived.by(() => {
+    const msg = latestLive;
+    if (msg && msg.type === 'digitizer_scan' && !Array.isArray(msg.data)) {
+      return msg.data.digitizer;
+    }
+    return null;
+  });
 
   // In 2-trigger modes only physical (fast/external) triggers advance the
   // goal; random events are still recorded and shown separately.
@@ -230,6 +251,74 @@
   onDestroy(() => {
     stopPolling();
     disconnectWs();
+    waveformChart?.destroy();
+    waveformChart = null;
+  });
+
+  // ── Live waveform chart (digitizer scans only) ──
+  // Digitizer messages carry waveforms under `data.digitizer`. We plot every
+  // analog channel present, plus TR0 traces only when the board digitizes TR0
+  // (DT5742 with fast_trigger_digitizing); DT5743 and non-digitized runs simply
+  // have no `tr0` block, so no special-casing is needed here.
+  const WAVEFORM_COLORS = [
+    '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7',
+    '#f97316', '#14b8a6', '#ec4899', '#84cc16', '#6366f1',
+    '#06b6d4', '#f43f5e', '#8b5cf6', '#10b981', '#f59e0b', '#0ea5e9',
+  ];
+
+  $effect(() => {
+    const msg = latestLive;
+    if (typeof document === 'undefined') return;
+    const canvas = document.getElementById('liveWaveformChart') as HTMLCanvasElement | null;
+    if (!canvas) {
+      waveformChart?.destroy();
+      waveformChart = null;
+      return;
+    }
+    const digitizer =
+      msg && msg.type === 'digitizer_scan' && !Array.isArray(msg.data)
+        ? msg.data.digitizer
+        : null;
+    if (!digitizer) return;
+
+    const traces: { label: string; data: number[] }[] = [];
+    for (const [name, arr] of Object.entries(digitizer.channels ?? {})) {
+      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: arr });
+    }
+    for (const [name, arr] of Object.entries(digitizer.tr0 ?? {})) {
+      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: arr });
+    }
+    if (traces.length === 0) return;
+
+    if (!waveformChart) {
+      waveformChart = new Chart(canvas, {
+        type: 'line',
+        data: { labels: traces[0].data.map((_, i) => i), datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: 'nearest', intersect: false },
+          elements: { point: { radius: 0 } },
+          scales: {
+            x: { title: { display: true, text: 'Sample' } },
+            y: { title: { display: true, text: 'ADC counts' } },
+          },
+          plugins: { legend: { position: 'bottom' } },
+        },
+      });
+    }
+
+    waveformChart.data.labels = traces[0].data.map((_, i) => i);
+    waveformChart.data.datasets = traces.map((t, i) => ({
+      label: t.label,
+      data: t.data,
+      borderColor: WAVEFORM_COLORS[i % WAVEFORM_COLORS.length],
+      backgroundColor: WAVEFORM_COLORS[i % WAVEFORM_COLORS.length],
+      borderWidth: 1,
+      pointRadius: 0,
+    }));
+    waveformChart.update('none');
   });
 
   async function fetchRun() {
@@ -515,7 +604,10 @@
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'current_scan' && Array.isArray(msg.data)) {
+        if (
+          (msg.type === 'current_scan' && Array.isArray(msg.data)) ||
+          msg.type === 'digitizer_scan'
+        ) {
           liveData = [...liveData.slice(-100), msg as LiveScanMessage];
         }
       } catch {}
@@ -1126,7 +1218,7 @@
 
           {#if liveOpen}
             <div class="divider my-2"></div>
-            {#if latestLive && latestLive.data.length > 0}
+            {#if liveReadings.length > 0}
               <div class="max-h-96 overflow-x-auto overflow-y-auto rounded-box">
                 <table class="table table-sm">
                   <thead class="sticky top-0 bg-base-200">
@@ -1139,7 +1231,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {#each latestLive.data as reading}
+                    {#each liveReadings as reading}
                       {@const state = channelState(reading.status)}
                       <tr>
                         <td>{reading.slot}</td>
@@ -1154,6 +1246,12 @@
               </div>
             {:else}
               <div class="text-base-content/50 text-sm py-2">Waiting for live data…</div>
+            {/if}
+            {#if liveDigitizer !== null}
+              <div class="divider my-2"></div>
+              <div class="max-h-96 overflow-x-auto overflow-y-auto rounded-box">
+                <canvas id="liveWaveformChart"></canvas>
+              </div>
             {/if}
           {/if}
         </div>

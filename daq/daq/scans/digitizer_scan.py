@@ -143,9 +143,43 @@ class DigitizerScan(CurrentScanner):
                             self.data_writer.write_power_data(reading, run_dir, point_index)
 
                         await self.broadcaster.broadcast({
-                            "type": "current_scan",
+                            "type": "digitizer_scan",
                             "point": point_index + 1,
-                            "data": readings,
+                            "data": {
+                                "power": readings,
+                                "digitizer": {
+                                    "channels": {
+                                        f"ch{ch}": (
+                                            self.digitizer._waveforms[-1][i]
+                                            if i < len(self.digitizer._waveforms) and self.digitizer._waveforms[-1][i] is not None
+                                            else None
+                                        )
+                                        for i, ch in enumerate(self.digitizer.enabled_channels)
+                                    },
+                                    "tr0": (
+                                        {
+                                            "tr0_g0": (
+                                                self.digitizer._tr0_waveforms[-1][0]
+                                                if self.digitizer._tr0_waveforms
+                                                and self.digitizer._tr0_waveforms[-1]
+                                                and len(self.digitizer._tr0_waveforms[-1]) > 0
+                                                and self.digitizer._tr0_waveforms[-1][0] is not None
+                                                else None
+                                            ),
+                                            "tr0_g1": (
+                                                self.digitizer._tr0_waveforms[-1][1]
+                                                if self.digitizer._tr0_waveforms
+                                                and self.digitizer._tr0_waveforms[-1]
+                                                and len(self.digitizer._tr0_waveforms[-1]) > 1
+                                                and self.digitizer._tr0_waveforms[-1][1] is not None
+                                                else None
+                                            ),
+                                        }
+                                        if getattr(self.digitizer.driver, "fast_trigger_digitizing", False)
+                                        else None
+                                    ),
+                                },
+                            },
                             "triggers": self.digitizer.goal_collected,
                             "target": target,
                             "random_triggers": self.digitizer.random_collected,
@@ -166,9 +200,43 @@ class DigitizerScan(CurrentScanner):
                     # typically one trigger short of the target.
                     try:
                         await self.broadcaster.broadcast({
-                            "type": "current_scan",
+                            "type": "digitizer_scan",
                             "point": point_index + 1,
-                            "data": [],
+                            "data": {
+                                "power": [],
+                                "digitizer": {
+                                    "channels": {
+                                        f"ch{ch}": (
+                                            self.digitizer._waveforms[-1][i]
+                                            if i < len(self.digitizer._waveforms) and self.digitizer._waveforms[-1][i] is not None
+                                            else None
+                                        )
+                                        for i, ch in enumerate(self.digitizer.enabled_channels)
+                                    },
+                                    "tr0": (
+                                        {
+                                            "tr0_g0": (
+                                                self.digitizer._tr0_waveforms[-1][0]
+                                                if self.digitizer._tr0_waveforms
+                                                and self.digitizer._tr0_waveforms[-1]
+                                                and len(self.digitizer._tr0_waveforms[-1]) > 0
+                                                and self.digitizer._tr0_waveforms[-1][0] is not None
+                                                else None
+                                            ),
+                                            "tr0_g1": (
+                                                self.digitizer._tr0_waveforms[-1][1]
+                                                if self.digitizer._tr0_waveforms
+                                                and self.digitizer._tr0_waveforms[-1]
+                                                and len(self.digitizer._tr0_waveforms[-1]) > 1
+                                                and self.digitizer._tr0_waveforms[-1][1] is not None
+                                                else None
+                                            ),
+                                        }
+                                        if getattr(self.digitizer.driver, "fast_trigger_digitizing", False)
+                                        else None
+                                    ),
+                                },
+                            },
                             "triggers": self.digitizer.goal_collected,
                             "target": target,
                             "random_triggers": self.digitizer.random_collected,
