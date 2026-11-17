@@ -160,6 +160,29 @@ class DigitizerScan(CurrentScanner):
                 progress = await self.digitizer.step()
                 done = target > 0 and progress["collected"] >= target
                 if done:
+                    # Send a definitive final status over the websocket before
+                    # the point finishes. Without this, the live-data card is
+                    # left showing the last power-sample broadcast, which is
+                    # typically one trigger short of the target.
+                    try:
+                        await self.broadcaster.broadcast({
+                            "type": "current_scan",
+                            "point": point_index + 1,
+                            "data": [],
+                            "triggers": self.digitizer.goal_collected,
+                            "target": target,
+                            "random_triggers": self.digitizer.random_collected,
+                            "total_triggers": self.digitizer.collected,
+                            "count_physical_only": self.digitizer.count_physical_only,
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        })
+                    except Exception as e:
+                        _LOG.warning(
+                            "run=%s point=%s: failed to send final live-data broadcast: %s",
+                            self.fsm.run_id,
+                            point_index,
+                            e,
+                        )
                     _LOG.info(
                         "run=%s point=%s: target reached (%s/%s triggers)",
                         self.fsm.run_id,
