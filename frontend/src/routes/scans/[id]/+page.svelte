@@ -14,7 +14,7 @@
     ListChecks,
     X,
   } from '@lucide/svelte';
-  import Chart from 'chart.js/auto';
+  import LiveWaveformChart from '$lib/components/LiveWaveformChart.svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
   import { goto } from '$app/navigation';
@@ -196,7 +196,6 @@
   let pointsModalOpen = $state(false);
   let selectedPoints: number[] = $state([]);
   let liveOpen = $state(true);
-  let waveformChart: Chart | null = null;
 
   const runId = $derived(Number(page.params.id));
   const latestLive = $derived(liveData.at(-1) ?? null);
@@ -251,77 +250,22 @@
   onDestroy(() => {
     stopPolling();
     disconnectWs();
-    waveformChart?.destroy();
-    waveformChart = null;
   });
 
-  // ── Live waveform chart (digitizer scans only) ──
-  // Digitizer messages carry waveforms under `data.digitizer`. We plot every
-  // analog channel present, plus TR0 traces only when the board digitizes TR0
-  // (DT5742 with fast_trigger_digitizing); DT5743 and non-digitized runs simply
-  // have no `tr0` block, so no special-casing is needed here.
-  const WAVEFORM_COLORS = [
-    '#ef4444', '#3b82f6', '#22c55e', '#eab308', '#a855f7',
-    '#f97316', '#14b8a6', '#ec4899', '#84cc16', '#6366f1',
-    '#06b6d4', '#f43f5e', '#8b5cf6', '#10b981', '#f59e0b', '#0ea5e9',
-  ];
-
-  $effect(() => {
-    const msg = latestLive;
-    if (typeof document === 'undefined') return;
-    const canvas = document.getElementById('liveWaveformChart') as HTMLCanvasElement | null;
-    if (!canvas) {
-      waveformChart?.destroy();
-      waveformChart = null;
-      return;
+  // Live waveform chart (digitizer scans only). Digitizer messages carry
+  // waveforms under `data.digitizer`; the LiveWaveformChart component plots the
+  // analog channels plus TR0 traces, preserving hidden traces across updates.
+  const liveTraces = $derived.by(() => {
+    const d = liveDigitizer;
+    if (!d) return [];
+    const out: { label: string; data: number[] }[] = [];
+    for (const [name, arr] of Object.entries(d.channels ?? {})) {
+      if (Array.isArray(arr) && arr.length > 0) out.push({ label: name, data: arr as number[] });
     }
-    const digitizer =
-      msg && msg.type === 'digitizer_scan' && !Array.isArray(msg.data)
-        ? msg.data.digitizer
-        : null;
-    if (!digitizer) return;
-
-    const traces: { label: string; data: number[] }[] = [];
-    // Copy arrays out of Svelte's $state proxy: Chart.js needs plain arrays
-    // it can define its own property descriptors on, and Svelte's proxy
-    // rejects that (state_descriptors_fixed).
-    for (const [name, arr] of Object.entries(digitizer.channels ?? {})) {
-      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: [...arr] as number[] });
+    for (const [name, arr] of Object.entries(d.tr0 ?? {})) {
+      if (Array.isArray(arr) && arr.length > 0) out.push({ label: name, data: arr as number[] });
     }
-    for (const [name, arr] of Object.entries(digitizer.tr0 ?? {})) {
-      if (Array.isArray(arr) && arr.length > 0) traces.push({ label: name, data: [...arr] as number[] });
-    }
-    if (traces.length === 0) return;
-
-    if (!waveformChart) {
-      waveformChart = new Chart(canvas, {
-        type: 'line',
-        data: { labels: traces[0].data.map((_, i) => i), datasets: [] },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          animation: false,
-          interaction: { mode: 'nearest', intersect: false },
-          elements: { point: { radius: 0 } },
-          scales: {
-            x: { title: { display: true, text: 'Sample' } },
-            y: { title: { display: true, text: 'ADC counts' } },
-          },
-          plugins: { legend: { position: 'bottom' } },
-        },
-      });
-    }
-
-    waveformChart.data.labels = traces[0].data.map((_, i) => i);
-    waveformChart.data.datasets = traces.map((t, i) => ({
-      label: t.label,
-      data: t.data,
-      borderColor: WAVEFORM_COLORS[i % WAVEFORM_COLORS.length],
-      backgroundColor: WAVEFORM_COLORS[i % WAVEFORM_COLORS.length],
-      borderWidth: 1,
-      pointRadius: 0,
-    }));
-    waveformChart.update('none');
+    return out;
   });
 
   async function fetchRun() {
@@ -1252,9 +1196,7 @@
             {/if}
             {#if liveDigitizer !== null}
               <div class="divider my-2"></div>
-              <div class="h-[400px] max-h-96 overflow-x-auto overflow-y-auto rounded-box">
-                <canvas id="liveWaveformChart"></canvas>
-              </div>
+              <LiveWaveformChart traces={liveTraces} />
             {/if}
           {/if}
         </div>
