@@ -17,6 +17,7 @@
   import LiveWaveformChart from '$lib/components/LiveWaveformChart.svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
+  import { formatApiError } from '$lib/apiError';
   import { goto } from '$app/navigation';
   import { env } from '$env/dynamic/public';
 
@@ -613,7 +614,7 @@
         daqStatus = null;
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || `Failed to ${action}`);
+      toast.error(formatApiError(err, `Failed to ${action}`));
     }
   }
 
@@ -677,7 +678,7 @@
       startPolling();
       connectWs();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to start scan');
+      toast.error(formatApiError(err, 'Failed to start scan'));
     }
   }
 
@@ -787,7 +788,7 @@
       toast.success(`Scan #${runId} deleted`);
       goto('/scans');
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to delete scan');
+      toast.error(formatApiError(err, 'Failed to delete scan'));
     }
   }
 
@@ -955,7 +956,7 @@
       editTriggerModeDcOffsetMv = tr0DcOffsetCodeToMv(editTriggerModeDcOffset);
       editJson = '';
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to update configuration');
+      toast.error(formatApiError(err, 'Failed to update configuration'));
     } finally {
       updating = false;
     }
@@ -974,7 +975,7 @@
       editComments = data.comments ?? '';
       toast.success('Run details saved');
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to update run details');
+      toast.error(formatApiError(err, 'Failed to update run details'));
     } finally {
       updatingRun = false;
     }

@@ -13,6 +13,7 @@
   } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
+  import { formatApiError } from '$lib/apiError';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
 
@@ -75,28 +76,6 @@
     if (!(err instanceof Object) || !('response' in err)) return undefined;
     const response = err.response as { status?: number };
     return response?.status;
-  }
-
-  function formatApiError(err: unknown, fallback: string): string {
-    if (!(err instanceof Object) || !('response' in err)) return fallback;
-    const response = err.response as { data?: { detail?: unknown } };
-    const detail = response?.data?.detail;
-    if (Array.isArray(detail)) {
-      return (
-        detail
-          .map(item => {
-            if (typeof item === 'string') return item;
-            if (item && typeof item === 'object' && 'msg' in item) {
-              const msg = item.msg;
-              if (typeof msg === 'string') return msg;
-            }
-            return '';
-          })
-          .filter(Boolean)
-          .join(', ') || fallback
-      );
-    }
-    return typeof detail === 'string' ? detail : fallback;
   }
 
   async function fetchUsers() {

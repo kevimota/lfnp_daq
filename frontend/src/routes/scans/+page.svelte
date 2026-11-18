@@ -3,6 +3,7 @@
   import { Plus, Play, Square, RotateCcw, Code, List, Trash2, Search, ArrowLeft } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
+  import { formatApiError } from '$lib/apiError';
   import { goto } from '$app/navigation';
 
   interface ScanRun {
@@ -452,7 +453,7 @@
       await fetchRuns();
       resetForm();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to create scan');
+      toast.error(formatApiError(err, 'Failed to create scan'));
     } finally {
       creating = false;
     }
@@ -508,7 +509,7 @@
       await api.post(`/daq/runs/${run.id}/start`);
       run.status = 'running';
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to start scan');
+      toast.error(formatApiError(err, 'Failed to start scan'));
     }
   }
 
@@ -526,7 +527,7 @@
       toast.success(`Scan #${run.id} deleted`);
       runs = runs.filter(r => r.id !== run.id);
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || 'Failed to delete scan');
+      toast.error(formatApiError(err, 'Failed to delete scan'));
     }
   }
 
