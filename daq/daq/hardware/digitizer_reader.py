@@ -60,6 +60,57 @@ _TRIGGER_MODE_NAMES = {
     TriggerMode.ACQ_AND_EXTOUT: "ACQ_AND_EXTOUT",
 }
 
+#: Meta fields that hold a variable-length list of strings. The TTree writer
+#: cannot represent these, so the meta tree is written as an RNTuple.
+_STRING_LIST_META_FIELDS = {"trigger_fast_thresholds", "trigger_fast_dc_offsets"}
+
+
+def _empty_list_array(dtype) -> ak.Array:
+    """One empty list with a concrete element type.
+
+    ``ak.Array([[]])`` infers ``var * unknown``, which Uproot's RNTuple writer
+    cannot serialize.
+    """
+    return ak.Array(
+        ak.contents.ListOffsetArray(
+            ak.index.Index64(np.array([0, 0], dtype=np.int64)),
+            ak.contents.NumpyArray(np.array([], dtype=dtype)),
+        )
+    )
+
+
+def _empty_string_list_array() -> ak.Array:
+    """One empty list of strings with a concrete element type."""
+    chars = ak.contents.NumpyArray(
+        np.array([], dtype=np.uint8), parameters={"__array__": "char"}
+    )
+    strings = ak.contents.ListOffsetArray(
+        ak.index.Index64(np.array([0], dtype=np.int64)),
+        chars,
+        parameters={"__array__": "string"},
+    )
+    return ak.Array(
+        ak.contents.ListOffsetArray(
+            ak.index.Index64(np.array([0, 0], dtype=np.int64)), strings
+        )
+    )
+
+
+def _meta_to_awkward(meta_fields: dict) -> ak.Array:
+    """Build the single-record meta array, typing empty lists explicitly."""
+    branches = {}
+    for name, value in meta_fields.items():
+        if isinstance(value, list):
+            if value:
+                branches[name] = ak.Array([value])
+            elif name in _STRING_LIST_META_FIELDS:
+                branches[name] = _empty_string_list_array()
+            else:
+                branches[name] = _empty_list_array(np.int64)
+        else:
+            branches[name] = np.asarray([value])
+    return ak.Array(branches)
+
 
 class DigitizerScanner:
     """Acquires digitizer waveforms during the FSM RECORDING phase.
@@ -942,8 +993,14 @@ class DigitizerScanner:
             meta_fields["hv_channel"] = [int(c["channel"]) for c in self._hv_channels]
             meta_fields["hv_voltage"] = [float(c["voltage"]) for c in self._hv_channels]
 
-        meta = ak.Array([meta_fields])
+        meta = _meta_to_awkward(meta_fields)
 
+        # uproot >= 5.7 writes RNTuples for dict-style assignment
+        # (``f[name] = data``). Write the digitizer TTree explicitly to keep
+        # the established layout and to avoid the RNTuple writer failing on
+        # empty list fields (e.g. fast-trigger settings on boards that do not
+        # support it). The meta tree stays an RNTuple because the TTree writer
+        # cannot represent ``var * string`` (the fast-trigger hex strings).
         with uproot.recreate(path) as f:
-            f["digitizer"] = data
+            f.mktree("digitizer", data)
             f["meta"] = meta
