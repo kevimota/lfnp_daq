@@ -32,6 +32,16 @@ _FIXED_INPUT_RANGE_VPP = {
     BoardModel.DT5743: 2.5,
 }
 
+#: Scalar branches dropped per board model.
+#:  - DT5742/X742 has no peak/baseline/charge/tdc scalars in hardware,
+#:    so the driver leaves them at 0.0 (placeholders). Dropping them
+#:    keeps the output file lean.
+#:  - DT5743/X743 analysis does not need peak/charge (per the previous issue).
+_UNUSED_SCALAR_BRANCHES = {
+    BoardModel.DT5742: ("tdc", "peak", "baseline", "charge"),
+    BoardModel.DT5743: ("peak", "charge"),
+}
+
 # Read out with a slave-terminated MBLT cycle, exactly like CAEN's
 # ReadoutTest sample. Never read on an empty FIFO (an MBLT read with no
 # pending data can block indefinitely).
@@ -921,6 +931,11 @@ class DigitizerScanner:
                     arr[e, : w.shape[0]] = w[:rec_len]
             data[f"ch{ch}"] = arr
 
+        # Drop scalar branches the board model does not provide / the analysis does not use.
+        board_model = int(self.info.model)
+        for name in _UNUSED_SCALAR_BRANCHES.get(BoardModel(board_model), ()):
+            data.pop(name, None)
+
         # TR0 (fast trigger digitizing) waveforms per acquisition group. Only
         # written when the driver actually enabled digitization, so a config
         # with fast_trigger_digitizing=false/None produces no tr0_g* branches.
@@ -948,12 +963,11 @@ class DigitizerScanner:
             "channels_used": [int(c) for c in self.enabled_channels],
             "record_length": int(rec_len),
             "trigger_mode": self._trigger_mode,
-            "trigger_source_mode": "simultaneous",
             "trigger_ext_mode": self._trigger_state.get("ext", ""),
             "trigger_sw_mode": self._trigger_state.get("sw", ""),
             "trigger_fast_mode": self._trigger_state.get("fast", ""),
             "trigger_io_level": self._trigger_state.get("io_level", ""),
-            "trigger_post_trigger_size": self._trigger_state.get("post_trigger_size", ""),
+            "trigger_post_trigger_size": int(self._trigger_state.get("post_trigger_size", 0)),
             "trigger_ch_self_trigger": self._trigger_state.get("ch_self_trigger", ""),
             "trigger_grp_self_trigger": self._trigger_state.get("grp_self_trigger", ""),
             "trigger_fast_digitizing": self._trigger_state.get("digitizing", ""),
@@ -965,8 +979,6 @@ class DigitizerScanner:
             "total_collected": int(self._collected),
             "sw_triggers_sent": int(self._sw_triggers_sent),
             "count_physical_only": bool(self._count_physical_only),
-            "trigger_sources": self._trigger_mode,
-            "trigger_source_attribution": "mixed",
             "input_range_vpp": float(self.input_range_vpp or 0.0),
             "tr0_attenuation": int(self.tr0_attenuation),
             "tr0_input_range_vpp": (
@@ -983,10 +995,6 @@ class DigitizerScanner:
             ),
             "calibrated": 1 if self.calibrated else 0,
             "connection_type": int(self.connection_type),
-            "link_used": str(self.arg),
-            "fast_trigger_digitizing": bool(
-                getattr(self.driver, "fast_trigger_digitizing", False)
-            ),
         }
         if self._hv_channels:
             meta_fields["hv_slot"] = [int(c["slot"]) for c in self._hv_channels]
