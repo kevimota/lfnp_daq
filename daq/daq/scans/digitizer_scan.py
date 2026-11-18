@@ -12,7 +12,11 @@ _LOG = logging.getLogger("daq.scan")
 
 
 class DigitizerScan(CurrentScanner):
-    """HV scan that also acquires digitizer waveforms during the RECORDING phase.
+    """Digitizer acquisition scan, optionally combined with HV control.
+
+    When the selected points contain HV channels the parent's HV logic is
+    used (ramp, wait, power sampling); when they do not, the power supply is
+    left untouched and only waveforms are acquired.
 
     The record phase is trigger-driven: it lasts until the configured number of
     triggers/waveforms is captured (or a safety timeout), while power data keeps
@@ -61,11 +65,58 @@ class DigitizerScan(CurrentScanner):
     async def _cleanup(self):
         await self.digitizer.close()
 
+    def _power_enabled(
+        self, voltage_points: list, run_points: list[int]
+    ) -> bool:
+        """Digitizer scans may run with no HV channels at all."""
+        if self.power is None:
+            return False
+        return any(voltage_points[i] for i in run_points)
+
+    def _digitizer_payload(self) -> dict:
+        """Build the JSON-serializable digitizer section of a live broadcast."""
+        return {
+            "channels": {
+                f"ch{ch}": (
+                    self.digitizer._waveforms[-1][i].tolist()
+                    if self.digitizer._waveforms
+                    and self.digitizer._waveforms[-1]
+                    and i < len(self.digitizer._waveforms[-1])
+                    and self.digitizer._waveforms[-1][i] is not None
+                    else None
+                )
+                for i, ch in enumerate(self.digitizer.enabled_channels)
+            },
+            "tr0": (
+                {
+                    "tr0_g0": (
+                        self.digitizer._tr0_waveforms[-1][0].tolist()
+                        if self.digitizer._tr0_waveforms
+                        and self.digitizer._tr0_waveforms[-1]
+                        and len(self.digitizer._tr0_waveforms[-1]) > 0
+                        and self.digitizer._tr0_waveforms[-1][0] is not None
+                        else None
+                    ),
+                    "tr0_g1": (
+                        self.digitizer._tr0_waveforms[-1][1].tolist()
+                        if self.digitizer._tr0_waveforms
+                        and self.digitizer._tr0_waveforms[-1]
+                        and len(self.digitizer._tr0_waveforms[-1]) > 1
+                        and self.digitizer._tr0_waveforms[-1][1] is not None
+                        else None
+                    ),
+                }
+                if getattr(self.digitizer.driver, "fast_trigger_digitizing", False)
+                else None
+            ),
+        }
+
     async def _record_point(self, run_dir: str, point_index: int, point_config: list, config: dict):
         sample_interval = config.get("sample_interval_seconds", 1)
 
         all_channels = list({(ch["slot"], ch["channel"]) for ch in point_config})
         channel_list = [{"slot": s, "channel": c} for s, c in all_channels]
+        has_power = bool(channel_list) and self.power is not None
 
         target = int(config.get("number_of_triggers", 0))
         run_id = self.fsm.run_id or 0
@@ -76,6 +127,7 @@ class DigitizerScan(CurrentScanner):
 
         samples_recorded = 0
         last_sample_time = None
+        last_readings = None
         done = target <= 0
 
         point_started = time.monotonic()
@@ -129,67 +181,45 @@ class DigitizerScan(CurrentScanner):
                     self.fsm.to_recording()
                     samples_recorded = 0
                     last_sample_time = None
+                    last_readings = None
                     await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
 
                 now = time.monotonic()
                 if last_sample_time is None or now - last_sample_time >= sample_interval:
-                    readings = await self._read_hv_sample(
-                        channel_list, run_id, point_index
-                    )
-                    if readings is None:
-                        last_sample_time = now
-                    else:
-                        for reading in readings:
-                            self.data_writer.write_power_data(reading, run_dir, point_index)
+                    readings = None
+                    if has_power:
+                        readings = await self._read_hv_sample(
+                            channel_list, run_id, point_index
+                        )
+                        if readings is not None:
+                            for reading in readings:
+                                self.data_writer.write_power_data(
+                                    reading, run_dir, point_index
+                                )
+                            last_readings = readings
 
-                        await self.broadcaster.broadcast({
-                            "type": "digitizer_scan",
-                            "point": point_index + 1,
-                            "data": {
-                                "power": readings,
-                                "digitizer": {
-                                    "channels": {
-                                        f"ch{ch}": (
-                                            self.digitizer._waveforms[-1][i].tolist()
-                                            if self.digitizer._waveforms and self.digitizer._waveforms[-1] and i < len(self.digitizer._waveforms[-1]) and self.digitizer._waveforms[-1][i] is not None
-                                            else None
-                                        )
-                                        for i, ch in enumerate(self.digitizer.enabled_channels)
-                                    },
-                                    "tr0": (
-                                        {
-                                            "tr0_g0": (
-                                                self.digitizer._tr0_waveforms[-1][0].tolist()
-                                                if self.digitizer._tr0_waveforms
-                                                and self.digitizer._tr0_waveforms[-1]
-                                                and len(self.digitizer._tr0_waveforms[-1]) > 0
-                                                and self.digitizer._tr0_waveforms[-1][0] is not None
-                                                else None
-                                            ),
-                                            "tr0_g1": (
-                                                self.digitizer._tr0_waveforms[-1][1].tolist()
-                                                if self.digitizer._tr0_waveforms
-                                                and self.digitizer._tr0_waveforms[-1]
-                                                and len(self.digitizer._tr0_waveforms[-1]) > 1
-                                                and self.digitizer._tr0_waveforms[-1][1] is not None
-                                                else None
-                                            ),
-                                        }
-                                        if getattr(self.digitizer.driver, "fast_trigger_digitizing", False)
-                                        else None
-                                    ),
-                                },
-                            },
-                            "triggers": self.digitizer.goal_collected,
-                            "target": target,
-                            "random_triggers": self.digitizer.random_collected,
-                            "total_triggers": self.digitizer.collected,
-                            "count_physical_only": self.digitizer.count_physical_only,
-                            "timestamp": datetime.now(UTC).isoformat(),
-                        })
+                    data = {"digitizer": self._digitizer_payload()}
+                    if readings:
+                        data["power"] = readings
+                    elif last_readings:
+                        # Keep the last good readings visible during a
+                        # transient read failure instead of hiding the table.
+                        data["power"] = last_readings
+                    await self.broadcaster.broadcast({
+                        "type": "digitizer_scan",
+                        "point": point_index + 1,
+                        "data": data,
+                        "triggers": self.digitizer.goal_collected,
+                        "target": target,
+                        "random_triggers": self.digitizer.random_collected,
+                        "total_triggers": self.digitizer.collected,
+                        "count_physical_only": self.digitizer.count_physical_only,
+                        "timestamp": datetime.now(UTC).isoformat(),
+                    })
 
+                    if not has_power or readings is not None:
                         samples_recorded += 1
-                        last_sample_time = now
+                    last_sample_time = now
 
                 progress = await self.digitizer.step()
                 done = target > 0 and progress["collected"] >= target
@@ -199,44 +229,13 @@ class DigitizerScan(CurrentScanner):
                     # left showing the last power-sample broadcast, which is
                     # typically one trigger short of the target.
                     try:
+                        final_data = {"digitizer": self._digitizer_payload()}
+                        if last_readings:
+                            final_data["power"] = last_readings
                         await self.broadcaster.broadcast({
                             "type": "digitizer_scan",
                             "point": point_index + 1,
-                            "data": {
-                                "power": [],
-                                "digitizer": {
-                                    "channels": {
-                                        f"ch{ch}": (
-                                            self.digitizer._waveforms[-1][i].tolist()
-                                            if self.digitizer._waveforms and self.digitizer._waveforms[-1] and i < len(self.digitizer._waveforms[-1]) and self.digitizer._waveforms[-1][i] is not None
-                                            else None
-                                        )
-                                        for i, ch in enumerate(self.digitizer.enabled_channels)
-                                    },
-                                    "tr0": (
-                                        {
-                                            "tr0_g0": (
-                                                self.digitizer._tr0_waveforms[-1][0].tolist()
-                                                if self.digitizer._tr0_waveforms
-                                                and self.digitizer._tr0_waveforms[-1]
-                                                and len(self.digitizer._tr0_waveforms[-1]) > 0
-                                                and self.digitizer._tr0_waveforms[-1][0] is not None
-                                                else None
-                                            ),
-                                            "tr0_g1": (
-                                                self.digitizer._tr0_waveforms[-1][1].tolist()
-                                                if self.digitizer._tr0_waveforms
-                                                and self.digitizer._tr0_waveforms[-1]
-                                                and len(self.digitizer._tr0_waveforms[-1]) > 1
-                                                and self.digitizer._tr0_waveforms[-1][1] is not None
-                                                else None
-                                            ),
-                                        }
-                                        if getattr(self.digitizer.driver, "fast_trigger_digitizing", False)
-                                        else None
-                                    ),
-                                },
-                            },
+                            "data": final_data,
                             "triggers": self.digitizer.goal_collected,
                             "target": target,
                             "random_triggers": self.digitizer.random_collected,

@@ -171,6 +171,19 @@ def _validate_scan_params(req: RunCreateRequest, session) -> None:
     """Validate the required parameters for the given scan type."""
     from ..models.hardware import CaenDigitizer
 
+    if req.type == "hv_scan":
+        if not req.voltage_points:
+            raise HTTPException(
+                status_code=400,
+                detail="HV scan requires at least one voltage point",
+            )
+        for idx, point in enumerate(req.voltage_points):
+            if not point:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"HV scan point {idx + 1} has no HV channel",
+                )
+
     check_digitizer = req.type == "digitizer_scan"
     if check_digitizer:
         if not req.digitizer_id:
@@ -424,7 +437,11 @@ async def start_run(
     if not config:
         raise HTTPException(status_code=400, detail="Run has no configuration")
 
+    scan_type = config.type or "hv_scan"
     voltage_points = config.voltage_points or []
+    if not voltage_points and scan_type == "digitizer_scan":
+        # A digitizer-only run still needs one acquisition point.
+        voltage_points = [[]]
     total_points = len(voltage_points)
     if total_points == 0:
         raise HTTPException(
@@ -460,6 +477,14 @@ async def start_run(
         selected_points = list(range(total_points))
         payload = None
         started_message = "Scan started"
+
+    if scan_type == "hv_scan":
+        for index in selected_points:
+            if not voltage_points[index]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"HV scan point {index + 1} has no HV channel",
+                )
 
     requested = _extract_channels(
         [voltage_points[index] for index in selected_points]

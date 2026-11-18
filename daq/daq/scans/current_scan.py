@@ -24,7 +24,7 @@ class CurrentScanner:
     def __init__(
         self,
         fsm: DAQFSM,
-        power_interface: CaenPSInterface,
+        power_interface: CaenPSInterface | None,
         data_writer: DataWriter,
         broadcaster: DataBroadcaster,
     ):
@@ -35,12 +35,24 @@ class CurrentScanner:
         self._stop_requested = False
         self._hv_retry_at: float | None = None
 
+    def _power_enabled(
+        self, voltage_points: list, run_points: list[int]
+    ) -> bool:
+        """Whether this run should touch the CAEN power supply.
+
+        HV scans always use the power supply.  ``DigitizerScan`` overrides
+        this to allow runs with no HV channels at all.
+        """
+        return True
+
     async def _wait_for_resume(self):
         while self.fsm.state == DAQState.PAUSED and not self._stop_requested:
             await asyncio.sleep(0.5)
 
     def _hv_disconnect(self):
         """Best-effort HV disconnect; never raises."""
+        if self.power is None:
+            return
         try:
             self.power.disconnect()
         except Exception:
@@ -82,6 +94,9 @@ class CurrentScanner:
             if time.monotonic() < self._hv_retry_at:
                 return None
             self._hv_retry_at = None
+
+        if self.power is None or not channel_list:
+            return []
 
         try:
             return self.power.read_all_channels(channel_list)
@@ -241,6 +256,10 @@ class CurrentScanner:
         wait_time = config.get("wait_time_seconds", 30)
         end_voltage = config.get("end_voltage", 0)
 
+        if not voltage_points and config.get("type") == "digitizer_scan":
+            # A digitizer-only run still needs one acquisition point.
+            voltage_points = [[]]
+
         if not voltage_points:
             self.fsm.fail("No voltage points defined")
             return {"success": False, "error": "No voltage points defined"}
@@ -268,19 +287,31 @@ class CurrentScanner:
             return {"success": False, "error": "Failed to start scan"}
 
         self._hv_retry_at = None
+        power_enabled = self._power_enabled(voltage_points, run_points)
 
         try:
             await self._prepare(config, run_id)
-            if not await self._hv_config_call(
-                self.power.power_all_on,
-                voltage_points[run_points[0]],
-                run_id=run_id,
-                point_index=run_points[0],
-                description="powering on channels",
-            ):
-                if self._stop_requested:
-                    return {"success": False, "error": "Stopped by user"}
-                return {"success": False, "error": "Could not power on HV channels"}
+            if power_enabled:
+                # Power on every channel used anywhere in the selected points,
+                # not just the first point's channels.
+                initial_channels = []
+                seen = set()
+                for idx in run_points:
+                    for ch in voltage_points[idx]:
+                        key = (int(ch["slot"]), int(ch["channel"]))
+                        if key not in seen:
+                            seen.add(key)
+                            initial_channels.append(ch)
+                if not await self._hv_config_call(
+                    self.power.power_all_on,
+                    initial_channels,
+                    run_id=run_id,
+                    point_index=run_points[0],
+                    description="powering on channels",
+                ):
+                    if self._stop_requested:
+                        return {"success": False, "error": "Stopped by user"}
+                    return {"success": False, "error": "Could not power on HV channels"}
 
             for point_index in run_points:
                 point_config = voltage_points[point_index]
@@ -292,28 +323,30 @@ class CurrentScanner:
                 )
 
                 # ── Configure / ramp ──
-                if not await self._configure_point(point_config, run_id, point_index):
-                    if self._stop_requested:
-                        break
-                    continue
+                if power_enabled and point_config:
+                    if not await self._configure_point(point_config, run_id, point_index):
+                        if self._stop_requested:
+                            break
+                        continue
 
                 if self._stop_requested:
                     break
 
                 # ── Wait ──
                 self.fsm.to_waiting()
-                if wait_time > 15:
-                    self._hv_disconnect()
-                waited = 0
-                while waited < wait_time and not self._stop_requested:
-                    await asyncio.sleep(1)
-                    waited += 1
-                    if self.fsm.state == DAQState.PAUSED:
-                        await self._wait_for_resume()
-                        if self._stop_requested:
-                            break
-                        self.fsm.to_waiting()
-                        waited = 0
+                if point_config:
+                    if wait_time > 15:
+                        self._hv_disconnect()
+                    waited = 0
+                    while waited < wait_time and not self._stop_requested:
+                        await asyncio.sleep(1)
+                        waited += 1
+                        if self.fsm.state == DAQState.PAUSED:
+                            await self._wait_for_resume()
+                            if self._stop_requested:
+                                break
+                            self.fsm.to_waiting()
+                            waited = 0
 
                 if self._stop_requested:
                     break
@@ -350,7 +383,7 @@ class CurrentScanner:
                             "channel": key[1],
                             "voltage": end_voltage,
                         })
-            if cleanup_channels:
+            if power_enabled and cleanup_channels:
                 await self._apply_final_state(
                     cleanup_channels, end_voltage, run_id
                 )

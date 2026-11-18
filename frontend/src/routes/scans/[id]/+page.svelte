@@ -205,12 +205,28 @@
     if (Array.isArray(msg.data)) return msg.data;
     return Array.isArray(msg.data?.power) ? msg.data.power : [];
   });
+  const liveHasPower = $derived.by(() => {
+    const msg = latestLive;
+    if (!msg) return false;
+    // Legacy HV scans always send power data as a plain array.
+    if (Array.isArray(msg.data)) return true;
+    return (
+      typeof msg.data === 'object' &&
+      msg.data !== null &&
+      Object.prototype.hasOwnProperty.call(msg.data, 'power')
+    );
+  });
   const liveDigitizer = $derived.by(() => {
     const msg = latestLive;
     if (msg && msg.type === 'digitizer_scan' && !Array.isArray(msg.data)) {
       return msg.data.digitizer;
     }
     return null;
+  });
+  const hvConfigInvalid = $derived.by(() => {
+    const c = config;
+    if (!c) return false;
+    return c.type === 'hv_scan' && !isValidHvPoints(c.voltage_points ?? []);
   });
 
   // In 2-trigger modes only physical (fast/external) triggers advance the
@@ -571,6 +587,14 @@
   }
 
   async function controlRun(action: 'start' | 'stop' | 'pause' | 'resume') {
+    if (
+      action === 'start' &&
+      config?.type === 'hv_scan' &&
+      !isValidHvPoints(config.voltage_points ?? [])
+    ) {
+      toast.error('HV scan requires at least one HV channel in every point');
+      return;
+    }
     try {
       await api.post(`/daq/runs/${runId}/${action}`);
       toast.success(`${action.charAt(0).toUpperCase() + action.slice(1)} successful`);
@@ -634,6 +658,13 @@
   }
 
   async function startScanSelection(body: { start_point?: number; points?: number[] }) {
+    if (
+      config?.type === 'hv_scan' &&
+      !isValidHvPoints(config.voltage_points ?? [])
+    ) {
+      toast.error('HV scan requires at least one HV channel in every point');
+      return;
+    }
     try {
       await api.post(`/daq/runs/${runId}/start`, body);
       toast.success('Scan started');
@@ -862,8 +893,16 @@
     editVoltagePoints = updated;
   }
 
+  function isValidHvPoints(points: { slot: number; channel: number; voltage: number }[][]): boolean {
+    return points.length > 0 && points.every((point) => point.length > 0);
+  }
+
   async function updateConfig() {
     if (!config) return;
+    if (editScanType === 'hv_scan' && !isValidHvPoints(editVoltagePoints)) {
+      toast.error('HV scan requires at least one HV channel in every point');
+      return;
+    }
     updating = true;
     try {
       const body = {
@@ -1068,7 +1107,7 @@
         <div class="card-body">
           <h3 class="card-title">FSM Controls</h3>
           <div class="flex gap-3 flex-wrap">
-            <button class="btn btn-info" disabled={!canControl(daqStatus?.state, 'start')} onclick={() => controlRun('start')}>
+            <button class="btn btn-info" disabled={!canControl(daqStatus?.state, 'start') || hvConfigInvalid} onclick={() => controlRun('start')}>
               <Play class="size-5" /> Start
             </button>
             <button class="btn btn-error" disabled={!canControl(daqStatus?.state, 'stop')} onclick={() => controlRun('stop')}>
@@ -1191,7 +1230,7 @@
                   </tbody>
                 </table>
               </div>
-            {:else}
+            {:else if liveHasPower}
               <div class="text-base-content/50 text-sm py-2">Waiting for live data…</div>
             {/if}
             {#if liveDigitizer !== null}

@@ -303,6 +303,10 @@
     newScan.voltage_points = updated;
   }
 
+  function isValidHvPoints(points: { slot: number; channel: number; voltage: number }[][]): boolean {
+    return points.length > 0 && points.every((point) => point.length > 0);
+  }
+
   async function loadConfigFromRun(runId: number) {
     if (!runId) return;
     try {
@@ -423,6 +427,10 @@
   }
 
   async function createScan() {
+    if (newScan.type === 'hv_scan' && !isValidHvPoints(newScan.voltage_points)) {
+      toast.error('HV scan requires at least one HV channel in every point');
+      return;
+    }
     creating = true;
     try {
       const payload = {
@@ -854,6 +862,12 @@
 
           <div class="divider">Voltage Points</div>
 
+          {#if newScan.type === 'hv_scan' && !isValidHvPoints(newScan.voltage_points)}
+            <div class="alert alert-warning text-sm">
+              HV scans require at least one HV channel in every point.
+            </div>
+          {/if}
+
           {#each newScan.voltage_points as point, pi}
             <div class="card bg-base-300">
               <div class="card-body p-4">
@@ -879,6 +893,10 @@
                   </div>
                 {/each}
 
+                {#if newScan.type === 'hv_scan' && point.length === 0}
+                  <div class="text-error text-xs">This point has no HV channel.</div>
+                {/if}
+
                 <button class="btn btn-ghost btn-xs" onclick={() => addChannel(pi)}>+ Add Channel</button>
               </div>
             </div>
@@ -890,7 +908,7 @@
 
       <div class="modal-action">
         <button class="btn" onclick={() => { showNewModal = false; resetForm(); }}>Cancel</button>
-        <button class="btn btn-primary" onclick={createScan} disabled={creating}>
+        <button class="btn btn-primary" onclick={createScan} disabled={creating || (newScan.type === 'hv_scan' && !isValidHvPoints(newScan.voltage_points))}>
           {creating ? 'Creating...' : 'Create Scan'}
         </button>
       </div>

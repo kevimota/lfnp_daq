@@ -280,21 +280,29 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
                 detail=f"Configuration not found for run_id {run_id}",
             )
 
-        if not config_row.power_supply:
+        scan_type = config_row.type or "hv_scan"
+        raw_points = config_row.voltage_points or []
+        if not raw_points and scan_type == "digitizer_scan":
+            # A digitizer-only run still needs one acquisition point.
+            raw_points = [[]]
+        has_hv = any(point for point in raw_points)
+
+        if has_hv and not config_row.power_supply:
             raise HTTPException(
                 status_code=400, detail="Configuration has no power supply assigned"
             )
 
-        ps_row = session.get(CaenPS, config_row.power_supply)
-        if not ps_row:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Power supply (id={config_row.power_supply}) not found",
-            )
+        ps_row = None
+        if config_row.power_supply:
+            ps_row = session.get(CaenPS, config_row.power_supply)
+            if not ps_row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Power supply (id={config_row.power_supply}) not found",
+                )
 
-        raw_points = config_row.voltage_points or []
         config = {
-            "type": config_row.type or "hv_scan",
+            "type": scan_type,
             "voltage_points": [
                 [
                     {"slot": int(ch["slot"]), "channel": int(ch["channel"]), "voltage": float(ch["voltage"])}
@@ -312,6 +320,13 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
         if total_points == 0:
             raise HTTPException(
                 status_code=400, detail="Configuration has no voltage points"
+            )
+        if scan_type == "hv_scan" and any(
+            not point for point in config["voltage_points"]
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="HV scan requires at least one HV channel in every point",
             )
 
         if req.points is not None:
@@ -343,7 +358,6 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
             run_points = list(range(total_points))
             mode = "start"
 
-        scan_type = config_row.type or "hv_scan"
         if scan_type not in SCAN_TYPES:
             raise HTTPException(
                 status_code=400,
@@ -417,11 +431,13 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
             if config_row.fast_trigger_dc_offset is not None:
                 config["fast_trigger_dc_offsets"] = [config_row.fast_trigger_dc_offset] * 2
 
-    system_type = SystemType(ps_row.system_type)
-    link_type = LinkType(ps_row.link_type)
-    power_interface = CaenPSInterface(
-        system_type, link_type, ps_row.arg, ps_row.username, ps_row.password
-    )
+    power_interface = None
+    if ps_row is not None:
+        system_type = SystemType(ps_row.system_type)
+        link_type = LinkType(ps_row.link_type)
+        power_interface = CaenPSInterface(
+            system_type, link_type, ps_row.arg, ps_row.username, ps_row.password
+        )
 
     fsm = DAQFSM()
     fsm.initialize()

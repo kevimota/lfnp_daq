@@ -1,6 +1,10 @@
+import logging
 from datetime import datetime, UTC
+
 from caen_libs import caenhvwrapper as hv
 from caen_libs._caenhvwrappertypes import SystemType, LinkType
+
+_LOG = logging.getLogger("daq.power")
 
 
 def is_not_present_error(exc: BaseException) -> bool:
@@ -81,13 +85,35 @@ class CaenPSInterface:
 
     def connect(self) -> bool:
         """Connect to the CAEN power supply device."""
+        if self.device is not None:
+            self.disconnect()
         self.device = hv.Device.open(
             self.system_type, self.link_type, self.arg, self.username, self.password
         )
+        return True
 
     def disconnect(self):
-        if self.device is not None:
-            self.device.close()
+        """Close the CAEN HV session, tolerating an already-lost link.
+
+        ``caen_libs`` only clears its internal ``__opened`` flag after a
+        successful ``deinit_system``.  If the connection has already dropped,
+        ``close()`` raises ``NOTCONNECTED``; in that case we clear the flag
+        ourselves so ``Device.__del__`` does not retry the failing deinit and
+        emit an "Exception ignored" traceback at GC time.  The interface
+        reference is always cleared so the next call can reconnect.
+        """
+        device = self.device
+        if device is None:
+            return
+        try:
+            device.close()
+        except Exception as exc:
+            _LOG.debug("CAEN HV close failed (already disconnected?): %s", exc)
+            try:
+                object.__setattr__(device, "_Device__opened", False)
+            except Exception:
+                pass
+        finally:
             self.device = None
 
     def is_connected(self) -> bool:
@@ -153,6 +179,8 @@ class CaenPSInterface:
 
     def power_all_on(self, channels: list[dict]) -> bool:
         """Power on multiple channels simultaneously."""
+        if not channels:
+            return True
         if self.device is None:
             self.connect()
         for ch in channels:
@@ -161,6 +189,8 @@ class CaenPSInterface:
 
     def power_all_off(self, channels: list[dict]) -> bool:
         """Power off multiple channels simultaneously."""
+        if not channels:
+            return True
         if self.device is None:
             self.connect()
         for ch in channels:
@@ -169,6 +199,8 @@ class CaenPSInterface:
 
     def set_all_voltages(self, channels: list[dict]) -> bool:
         """Set multiple channels simultaneously."""
+        if not channels:
+            return True
         if self.device is None:
             self.connect()
         for ch in channels:
@@ -177,6 +209,8 @@ class CaenPSInterface:
 
     def read_all_channels(self, channel_config: list[dict]) -> list[dict]:
         """Read voltage and current from multiple channels."""
+        if not channel_config:
+            return []
         results = []
         if self.device is None:
             self.connect()
