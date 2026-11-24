@@ -94,6 +94,7 @@ Environment variables (`.env`):
 | `SECRET_KEY` | — | JWT signing key |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | — | JWT lifetime |
 | `DAQ_URL` | `http://daq-dev:8001` | Internal DAQ container URL |
+| `DAQ_API_KEY` | — | Shared secret sent to the DAQ as `X-DAQ-Key` |
 | `FIRST_SUPERUSER` | `admin` | Default admin username |
 | `FIRST_SUPERUSER_PASSWORD` | `admin@1234` | Default admin password |
 | `FIRST_SUPERUSER_EMAIL` | `admin@example.com` | Default admin email |

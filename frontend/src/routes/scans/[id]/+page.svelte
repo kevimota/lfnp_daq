@@ -560,8 +560,9 @@
 
   function connectWs() {
     disconnectWs();
-    const daqUrl = `${env.PUBLIC_DAQ_URL || 'http://localhost'}:${env.PUBLIC_DAQ_PORT || '8001'}`;
-    const wsUrl = daqUrl.replace(/^http/, 'ws') + `/ws/${runId}`;
+    const token = localStorage.getItem('access_token');
+    if (!token) return;
+    const wsUrl = `${apiBase().replace(/^http/, 'ws')}/daq/ws/${runId}?token=${encodeURIComponent(token)}`;
     ws = new WebSocket(wsUrl);
     ws.onopen = () => { wsConnected = true; };
     ws.onclose = () => { wsConnected = false; };
