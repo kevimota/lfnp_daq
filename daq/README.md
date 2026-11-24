@@ -95,6 +95,7 @@ Environment variables (`.env`):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | — | PostgreSQL connection string |
+| `DAQ_API_KEY` | — | Shared secret required in `X-DAQ-Key`; startup fails if unset |
 
 The DAQ connects directly to PostgreSQL for read access (run configurations) and status updates.
 

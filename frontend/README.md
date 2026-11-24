@@ -47,8 +47,7 @@ Dynamic environment variables at runtime (no rebuild needed):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PUBLIC_API_URL` | `http://localhost:8000` | Backend REST API URL |
-| `PUBLIC_DAQ_URL` | `http://localhost:8001` | DAQ HTTP/WS URL |
+| `PUBLIC_API_URL` | `http://localhost:8000` | Backend REST/WS API URL |
 
 Managed via SvelteKit's `$env/dynamic/public` — set them in `.env` or pass at container runtime.
 
