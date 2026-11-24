@@ -56,6 +56,24 @@ def _build_lock(run_id: int) -> threading.Lock:
         return lock
 
 
+def _wipe_run(run_dir: str, run_id: int) -> None:
+    """Remove a run directory and its cached archive files (if they exist)."""
+    import shutil
+    # Remove the run directory tree (raw data, configs, logs, etc.)
+    if os.path.isdir(run_dir):
+        shutil.rmtree(run_dir)
+    # Remove cached zip + manifest for this run
+    cache_dir = os.path.join("/data/daq/cache")
+    for ext in (".zip", ".json"):
+        p = os.path.join(cache_dir, f"run_{run_id}{ext}")
+        try:
+            os.remove(p)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
 def _run_fingerprint(run_dir: str) -> str:
     """Fingerprint the run directory contents (path + size + mtime).
 
