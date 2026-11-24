@@ -424,8 +424,17 @@ async def start_scan(run_id: int, req: RunStartRequest | None = None):
                         ),
                     )
                 config["dc_offset"] = config_row.dc_offset
-            if config_row.fast_trigger_digitizing is not None:
+            # TR0 digitization only makes sense when a fast trigger is active.
+            # Force it off for random / external / random-external modes
+            # regardless of what was persisted, so the board never digitizes
+            # TR0 needlessly.
+            fast_mode = bool(config_row.trigger_mode and "fast" in config_row.trigger_mode)
+            if not fast_mode:
+                config["fast_trigger_digitizing"] = False
+            elif config_row.fast_trigger_digitizing is not None:
                 config["fast_trigger_digitizing"] = config_row.fast_trigger_digitizing
+            else:
+                config["fast_trigger_digitizing"] = True
             if config_row.fast_trigger_threshold is not None:
                 config["fast_trigger_thresholds"] = [config_row.fast_trigger_threshold] * 2
             if config_row.fast_trigger_dc_offset is not None:

@@ -157,7 +157,7 @@ def update_configuration(config_id: int, req: RunCreateRequest, session: Session
     config.post_trigger_size = req.post_trigger_size
     config.dc_offset = req.dc_offset
     config.channels = req.channels
-    config.fast_trigger_digitizing = req.fast_trigger_digitizing
+    config.fast_trigger_digitizing = req.fast_trigger_digitizing if req.trigger_mode and "fast" in req.trigger_mode else False
     config.fast_trigger_threshold = req.fast_trigger_threshold
     config.fast_trigger_dc_offset = req.fast_trigger_dc_offset
     session.add(config)
@@ -378,6 +378,9 @@ def _extract_channels(voltage_points: list) -> set[tuple[int, int]]:
 )
 def create_run(req: RunCreateRequest, session: SessionDep):
     _validate_scan_params(req, session)
+    fast_digitizing = req.fast_trigger_digitizing
+    if not (req.trigger_mode and "fast" in req.trigger_mode):
+        fast_digitizing = False
     config = DAQConfiguration(
         type=req.type or "hv_scan",
         voltage_points=req.voltage_points,
@@ -395,7 +398,7 @@ def create_run(req: RunCreateRequest, session: SessionDep):
         post_trigger_size=req.post_trigger_size,
         dc_offset=req.dc_offset,
         channels=req.channels,
-        fast_trigger_digitizing=req.fast_trigger_digitizing,
+        fast_trigger_digitizing=fast_digitizing,
         fast_trigger_threshold=req.fast_trigger_threshold,
         fast_trigger_dc_offset=req.fast_trigger_dc_offset,
     )
@@ -706,9 +709,7 @@ async def get_run_log(run_id: int, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/log"
     try:
-        async with httpx.AsyncClient(
-            timeout=10, verify=False, headers=config.DAQ_HEADERS
-        ) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False, headers=config.DAQ_HEADERS) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return Response(content=resp.text, media_type="text/plain")
@@ -723,9 +724,7 @@ async def list_run_files(run_id: int, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/files"
     try:
-        async with httpx.AsyncClient(
-            timeout=10, verify=False, headers=config.DAQ_HEADERS
-        ) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False, headers=config.DAQ_HEADERS) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return resp.json()
