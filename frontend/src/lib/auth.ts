@@ -92,8 +92,8 @@ function createAuthStore() {
       toast.info('User logged out');
     },
 
-    init() {
-      validateTokenOnInit();
+    async init() {
+      return validateTokenOnInit();
     }
   };
 }

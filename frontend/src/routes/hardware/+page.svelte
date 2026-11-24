@@ -90,7 +90,15 @@
   async function updatePS() {
     updating = true;
     try {
-      await api.put(`/hardware/caen-ps/${editPS.id}`, editPS);
+      const payload: Record<string, unknown> = {
+        name: editPS.name,
+        system_type: editPS.system_type,
+        link_type: editPS.link_type,
+        arg: editPS.arg,
+        username: editPS.username,
+      };
+      if (editPS.password !== '') payload.password = editPS.password;
+      await api.put(`/hardware/caen-ps/${editPS.id}`, payload);
       showEditModal = false;
       await fetchSupplies();
     } catch (err: any) {
