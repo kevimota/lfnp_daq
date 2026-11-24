@@ -163,16 +163,20 @@ async def list_run_files(run_id: int):
 
 @router.get("/runs/{run_id}/files/{filename:path}")
 async def download_run_file(run_id: int, filename: str):
-    run_dir = _run_dir(run_id)
-    file_path = os.path.normpath(os.path.join(run_dir, filename))
-    if not file_path.startswith(os.path.normpath(run_dir)):
+    run_dir = os.path.realpath(_run_dir(run_id))
+    file_path = os.path.realpath(os.path.join(run_dir, filename))
+    if os.path.commonpath([run_dir, file_path]) != run_dir:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
     media_type, _ = mimetypes.guess_type(filename)
-    return FileResponse(file_path, media_type=media_type or "application/octet-stream", filename=filename)
+    return FileResponse(
+        file_path,
+        media_type=media_type or "application/octet-stream",
+        filename=os.path.basename(file_path),
+    )
 
 
 @router.get("/runs/{run_id}/download")
