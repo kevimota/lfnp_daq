@@ -3,7 +3,6 @@ import os
 import secrets
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .api import router as daq_router, scan_manager
@@ -19,14 +18,6 @@ logging.basicConfig(
 
 app = FastAPI(title="DAQ System")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 def _key_matches(value: str) -> bool:
     return secrets.compare_digest(value.encode(), _DAQ_API_KEY.encode())
@@ -34,9 +25,7 @@ def _key_matches(value: str) -> bool:
 
 @app.middleware("http")
 async def require_daq_key(request: Request, call_next):
-    # CORS preflight requests cannot carry custom headers.
-    key_ok = _key_matches(request.headers.get("x-daq-key", ""))
-    if request.method != "OPTIONS" and not key_ok:
+    if not _key_matches(request.headers.get("x-daq-key", "")):
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     return await call_next(request)
 
