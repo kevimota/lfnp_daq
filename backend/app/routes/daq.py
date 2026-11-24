@@ -1,16 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, Query
+from fastapi import APIRouter, Depends, HTTPException, Response, Query, WebSocket
 from fastapi.responses import StreamingResponse
-from sqlmodel import select, func
+from sqlmodel import Session, select, func
 from typing import List, Optional
 from datetime import datetime, UTC
 from ..routes.users import get_current_user
+import asyncio
 import httpx
 import json
+import jwt
 import math
+import websockets
+from pydantic import ValidationError
 from urllib.parse import quote
+from uuid import UUID
 
 from ..core.config import config
-from ..core.db import SessionDep
+from ..core.db import SessionDep, engine
+from ..models.auth import TokenPayload, User
 from ..models.daq import (
     DAQConfiguration,
     DAQRuns,
@@ -26,6 +32,67 @@ from ..models.daq import (
 router = APIRouter(prefix="/daq", tags=["DAQ"])
 
 
+@router.websocket("/ws/{run_id}")
+async def proxy_run_websocket(
+    websocket: WebSocket,
+    run_id: int,
+    token: str = Query(...),
+):
+    """Relay live run data to the browser without exposing the DAQ service.
+
+    Browsers cannot send an Authorization header on a WebSocket, so the JWT
+    arrives as a query parameter and is validated here. The shared DAQ key
+    never leaves the backend.
+
+    shortcut: the JWT can appear in access logs; use Sec-WebSocket-Protocol
+    or a one-time ticket if logs are exposed.
+    """
+    try:
+        payload = jwt.decode(token, config.SECRET_KEY, algorithms=[config.ALGORITHM])
+        token_data = TokenPayload(**payload)
+        if not token_data.sub:
+            raise ValueError
+        with Session(engine) as session:
+            user = session.get(User, UUID(token_data.sub))
+    except (jwt.InvalidTokenError, ValidationError, ValueError):
+        user = None
+
+    if not user or not user.is_active:
+        await websocket.close(code=4401)
+        return
+
+    daq_ws_url = f"ws://{config.DAQ_HOST}:{config.DAQ_PORT}/ws/{run_id}"
+    try:
+        upstream = await websockets.connect(
+            daq_ws_url, additional_headers=config.DAQ_HEADERS
+        )
+    except Exception:
+        await websocket.close(code=1011)
+        return
+
+    await websocket.accept()
+
+    async def client_to_upstream():
+        while True:
+            await upstream.send(await websocket.receive_text())
+
+    async def upstream_to_client():
+        async for message in upstream:
+            await websocket.send_text(message)
+
+    tasks = [
+        asyncio.create_task(client_to_upstream()),
+        asyncio.create_task(upstream_to_client()),
+    ]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await upstream.close()
+
+
 # ── Check daq health ────────────────────────────────────────────
 
 
@@ -34,7 +101,9 @@ async def health_check():
     daq_url = config.DAQ_URL
     url = f"{daq_url}/health"
 
-    async with httpx.AsyncClient(timeout=10, verify=False) as client:
+    async with httpx.AsyncClient(
+        timeout=10, verify=False, headers=config.DAQ_HEADERS
+    ) as client:
         resp = await client.get(url)
         if resp.status_code != 200:
             detail = "DAQ error"
@@ -142,7 +211,9 @@ async def _proxy_to_daq(
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/{action}"
     try:
-        async with httpx.AsyncClient(timeout=60, verify=False) as client:
+        async with httpx.AsyncClient(
+            timeout=60, verify=False, headers=config.DAQ_HEADERS
+        ) as client:
             if method == "GET":
                 resp = await client.get(url)
             else:
@@ -635,7 +706,7 @@ async def get_run_log(run_id: int, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/log"
     try:
-        async with httpx.AsyncClient(timeout=10, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False, headers=config.DAQ_HEADERS) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return Response(content=resp.text, media_type="text/plain")
@@ -650,7 +721,7 @@ async def list_run_files(run_id: int, session: SessionDep):
     daq_url = config.DAQ_URL
     url = f"{daq_url}/daq/runs/{run_id}/files"
     try:
-        async with httpx.AsyncClient(timeout=10, verify=False) as client:
+        async with httpx.AsyncClient(timeout=10, verify=False, headers=config.DAQ_HEADERS) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return resp.json()
@@ -674,6 +745,7 @@ async def _stream_from_daq(
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(connect=10.0, read=None, write=None, pool=None),
         verify=False,
+        headers=config.DAQ_HEADERS,
     )
     try:
         request = client.build_request("GET", url)

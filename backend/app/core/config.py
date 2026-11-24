@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     DATABASE_PASSWORD: str
     DAQ_HOST: str = "daq-dev"
     DAQ_PORT: int = 8001
+    DAQ_API_KEY: str
     all_cors_origins: bool = True
     FIRST_SUPERUSER: str = "admin"
     FIRST_SUPERUSER_PASSWORD: str = "admin@1234"
@@ -24,6 +25,10 @@ class Settings(BaseSettings):
     @property
     def DAQ_URL(self) -> str:
         return f"http://{self.DAQ_HOST}:{self.DAQ_PORT}"
+
+    @property
+    def DAQ_HEADERS(self) -> dict[str, str]:
+        return {"X-DAQ-Key": self.DAQ_API_KEY}
 
     class Config:
         env_file = ".env"
