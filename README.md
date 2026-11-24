@@ -12,7 +12,7 @@ daq/         FastAPI (standalone) + caen_libs (CAEN hardware control, FSM, data 
 
 - **Frontend** communicates with the **backend** via REST (authenticated with JWT).
 - **Backend** proxies scan control commands to the **DAQ** service and manages the database.
-- **DAQ** runs scans directly, controls CAEN power supplies via `caen_libs`, and serves a per-run WebSocket for live monitoring.
+- **DAQ** runs scans directly, controls CAEN power supplies via `caen_libs`, and serves a per-run WebSocket (proxied by the backend) for live monitoring.
 - Data is stored on a shared volume at `/data/daq/raw/run_{run_id}/`.
 
 ## Quick Start
@@ -65,8 +65,8 @@ See `.env` for required values:
 | `SECRET_KEY` | JWT signing key |
 | `DATABASE_URL` | PostgreSQL connection string |
 | `DAQ_URL` | DAQ service URL (internal) |
-| `PUBLIC_API_URL` | Backend URL (browser-facing) |
-| `PUBLIC_DAQ_URL` | DAQ URL (browser-facing, for WebSocket) |
+| `DAQ_API_KEY` | Shared secret between backend and DAQ |
+| `PUBLIC_API_URL` | Backend URL (browser-facing, REST and WebSocket) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT expiry |
 
 ## Data Flow
@@ -74,5 +74,5 @@ See `.env` for required values:
 1. User creates a scan run via the frontend → backend stores config + run in DB
 2. User starts the run → backend proxies to DAQ, which instantiates an FSM + scanner
 3. Scanner iterates through voltage points: set voltage → ramp → wait → record → next
-4. During recording, samples are written to CSV and broadcast via WebSocket
+4. During recording, samples are written to CSV and broadcast via the backend WebSocket proxy
 5. On completion/failure, the DAQ updates the run status in the DB

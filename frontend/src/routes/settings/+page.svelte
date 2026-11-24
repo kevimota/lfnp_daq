@@ -24,6 +24,7 @@
   let saving = $state(false);
 
   onMount(async () => {
+    await auth.init();
     if (!$userInfo?.is_superuser) {
       toast.error('Only admins can access settings');
       auth.logout();
