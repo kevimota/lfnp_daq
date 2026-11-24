@@ -5,6 +5,7 @@ import os
 import time
 from datetime import datetime, UTC
 from typing import Callable, Optional
+
 from copy import deepcopy
 
 import numpy as np
@@ -196,6 +197,8 @@ class DigitizerScanner:
         self._peaks: list[float] = []
         self._baselines: list[float] = []
         self._charges: list[float] = []
+        # Ring buffer of the most recent event's waveforms, used for the
+        # live WebSocket broadcast. Only the last event is ever referenced.
         self._waveforms: list[list[np.ndarray]] = []
         self._tr0_waveforms: list = []
         self._read_attempts = 0
@@ -625,8 +628,8 @@ class DigitizerScanner:
         self._peaks = []
         self._baselines = []
         self._charges = []
-        self._waveforms = []
-        self._tr0_waveforms = []
+        self._waveforms: list[list[np.ndarray]] = []
+        self._tr0_waveforms: list = []
         self._trigger_sources = []  # per-event trigger attribution (always "mixed" in simultaneous)
         self._collected = 0
         self._physical_collected = 0
@@ -638,6 +641,11 @@ class DigitizerScanner:
         self._last_collect_at = self._point_started
         self._stall_warned = False
         self._last_milestone = -1
+
+        # Open ROOT file for incremental writes of this point.
+        self._point_root_path = os.path.join(self._run_dir, f"digitizer_point_{self._point_index}.root")
+        self._root_file = uproot.recreate(self._point_root_path)
+        self._root_tree = None
 
         dev = self.device
         self._trace("clear_data")
@@ -773,6 +781,7 @@ class DigitizerScanner:
                 self._skipped_events += 1
                 continue
             waveforms, scalars, tr0 = extracted
+            # Keep metadata in RAM for later meta fields.
             self._events.append(self._collected)
             self._timestamps.append(datetime.now(UTC).timestamp())
             self._time_tags.append(info.trigger_time_tag)
@@ -781,8 +790,22 @@ class DigitizerScanner:
             self._peaks.append(scalars["peak"])
             self._baselines.append(scalars["baseline"])
             self._charges.append(scalars["charge"])
-            self._waveforms.append(deepcopy(waveforms))
-            self._tr0_waveforms.append(deepcopy(tr0) if tr0 is not None else None)
+            # Keep only the most recent event's waveforms for the live broadcast
+            # (the broadcaster reads [-1]); memory stays O(1) per point.
+            self._waveforms = [deepcopy(waveforms)]
+            self._tr0_waveforms = [deepcopy(tr0) if tr0 is not None else None]
+
+            # Write this trigger's waveform data to the ROOT file incrementally.
+            ts = datetime.now(UTC).timestamp()
+            time_tag = info.trigger_time_tag
+            trigger_source = "mixed"
+            data = self._make_root_event_data(
+                waveforms, scalars, tr0, ts, time_tag, trigger_source
+            )
+            if self._root_tree is None:
+                self._root_tree = self._root_file.mktree("digitizer", data)
+            else:
+                self._root_tree.extend(data)
             self._collected += 1
             # In simultaneous mode every event is tagged "mixed"; TR0 digitization
             # (tr0_g0/tr0_g1) is stored separately and can be used post-acquisition
@@ -869,87 +892,10 @@ class DigitizerScanner:
         except Error:
             pass
 
-        path = os.path.join(self._run_dir, f"digitizer_point_{self._point_index}.root")
         self._update_counts()
-        self._write_root(path)
-        _LOG.info(
-            "run=%s point=%s: acquisition ended physical=%s/%s random=%s total=%s "
-            "(skipped=%s, triggers sent=%s) -> %s",
-            self._run_id,
-            self._point_index,
-            self._physical_collected,
-            self._target,
-            self._random_collected,
-            self._collected,
-            self._skipped_events,
-            self._sw_triggers_sent,
-            path,
-        )
-        return {
-            "n_events": self._collected,
-            "physical_collected": self._physical_collected,
-            "random_collected": self._random_collected,
-            "path": path,
-        }
 
-    async def end_point(self) -> dict:
-        """Stop acquisition and write the per-point ROOT file (on a worker thread)."""
-        return await self._run(self._do_end_point)
-
-    # ── event handling ──────────────────────────────────────────
-
-    def _extract_event(self, evt):
-        """Return (waveforms: list[np.ndarray] aligned to enabled_channels, scalars: dict) or None."""
-        return self.driver.extract(evt)
-
-    # ── ROOT output ─────────────────────────────────────────────
-
-    def _write_root(self, path: str):
-        n = len(self._events)
-        rec_len = 1
-        for wf in self._waveforms:
-            for arr in wf:
-                if arr is not None:
-                    rec_len = max(rec_len, arr.shape[0])
-
-        data = {
-            "event": np.asarray(self._events, dtype=np.int32),
-            "timestamp": np.asarray(self._timestamps, dtype=np.float64),
-            "time_tag": np.asarray(self._time_tags, dtype=np.uint32),
-            "start_cell": np.asarray(self._start_cells, dtype=np.uint16),
-            "tdc": np.asarray(self._tdcs, dtype=np.uint64),
-            "peak": np.asarray(self._peaks, dtype=np.float32),
-            "baseline": np.asarray(self._baselines, dtype=np.float32),
-            "charge": np.asarray(self._charges, dtype=np.float32),
-            "trigger_source": np.asarray(self._trigger_sources, dtype="<U16"),
-        }
-        for idx, ch in enumerate(self.enabled_channels):
-            arr = np.full((n, rec_len), np.nan, dtype=np.float32)
-            for e in range(n):
-                w = self._waveforms[e][idx]
-                if w is not None:
-                    arr[e, : w.shape[0]] = w[:rec_len]
-            data[f"ch{ch}"] = arr
-
-        # Drop scalar branches the board model does not provide / the analysis does not use.
-        board_model = int(self.info.model)
-        for name in _UNUSED_SCALAR_BRANCHES.get(BoardModel(board_model), ()):
-            data.pop(name, None)
-
-        # TR0 (fast trigger digitizing) waveforms per acquisition group. Only
-        # written when the driver actually enabled digitization, so a config
-        # with fast_trigger_digitizing=false/None produces no tr0_g* branches.
-        if self._tr0_waveforms and getattr(self.driver, "fast_trigger_digitizing", False):
-            for g in range(self.driver.n_groups):
-                arr = np.full((n, rec_len), np.nan, dtype=np.float32)
-                for e in range(n):
-                    w = None
-                    if self._tr0_waveforms[e] is not None and g < len(self._tr0_waveforms[e]):
-                        w = self._tr0_waveforms[e][g]
-                    if w is not None:
-                        arr[e, : w.shape[0]] = w[:rec_len]
-                data[f"tr0_g{g}"] = arr
-
+        # Write meta and close the incremental ROOT file.
+        path = self._point_root_path
         meta_fields = {
             "run_id": int(self._run_id),
             "point_index": int(self._point_index),
@@ -961,7 +907,7 @@ class DigitizerScanner:
             "adc_n_bits": int(self.info.adc_n_bits),
             "n_channels": int(self.driver.n_total),
             "channels_used": [int(c) for c in self.enabled_channels],
-            "record_length": int(rec_len),
+            "record_length": int(self.record_length),
             "trigger_mode": self._trigger_mode,
             "trigger_ext_mode": self._trigger_state.get("ext", ""),
             "trigger_sw_mode": self._trigger_state.get("sw", ""),
@@ -1003,12 +949,86 @@ class DigitizerScanner:
 
         meta = _meta_to_awkward(meta_fields)
 
-        # uproot >= 5.7 writes RNTuples for dict-style assignment
-        # (``f[name] = data``). Write the digitizer TTree explicitly to keep
-        # the established layout and to avoid the RNTuple writer failing on
-        # empty list fields (e.g. fast-trigger settings on boards that do not
-        # support it). The meta tree stays an RNTuple because the TTree writer
-        # cannot represent ``var * string`` (the fast-trigger hex strings).
-        with uproot.recreate(path) as f:
-            f.mktree("digitizer", data)
-            f["meta"] = meta
+        # Write meta and close file.
+        self._root_file["meta"] = meta
+        self._root_file.close()
+        self._root_file = None
+        self._root_tree = None
+
+        _LOG.info(
+            "run=%s point=%s: acquisition ended physical=%s/%s random=%s total=%s "
+            "(skipped=%s, triggers sent=%s) -> %s",
+            self._run_id,
+            self._point_index,
+            self._physical_collected,
+            self._target,
+            self._random_collected,
+            self._collected,
+            self._skipped_events,
+            self._sw_triggers_sent,
+            path,
+        )
+        return {
+            "n_events": self._collected,
+            "physical_collected": self._physical_collected,
+            "random_collected": self._random_collected,
+            "path": path,
+        }
+
+    async def end_point(self) -> dict:
+        """Stop acquisition and write the per-point ROOT file (on a worker thread)."""
+        return await self._run(self._do_end_point)
+
+    # ── event handling ──────────────────────────────────────────
+
+    def _extract_event(self, evt):
+        """Return (waveforms: list[np.ndarray] aligned to enabled_channels, scalars: dict) or None."""
+        return self.driver.extract(evt)
+
+    # ── ROOT output ─────────────────────────────────────────────
+
+    def _make_root_event_data(
+        self, waveforms, scalars, tr0, ts, time_tag, trigger_source
+    ) -> dict:
+        """Build the single-event TTree dict for incremental ROOT writing."""
+        n = 1
+        rec_len = self.record_length if self.record_length and self.record_length > 0 else 1
+        for wf in waveforms:
+            if wf is not None and hasattr(wf, "shape"):
+                rec_len = max(rec_len, wf.shape[0])
+
+        data = {
+            "event": np.array([self._collected], dtype=np.int32),
+            "timestamp": np.array([ts], dtype=np.float64),
+            "time_tag": np.array([time_tag], dtype=np.uint32),
+            "start_cell": np.array([scalars["start_cell"]], dtype=np.uint16),
+            "tdc": np.array([scalars["tdc"]], dtype=np.uint64),
+            "peak": np.array([scalars["peak"]], dtype=np.float32),
+            "baseline": np.array([scalars["baseline"]], dtype=np.float32),
+            "charge": np.array([scalars["charge"]], dtype=np.float32),
+            "trigger_source": np.array([trigger_source], dtype="<U16"),
+        }
+
+        # Drop scalar branches the board model does not provide.
+        board_model = int(self.info.model)
+        for name in _UNUSED_SCALAR_BRANCHES.get(BoardModel(board_model), ()):
+            data.pop(name, None)
+
+        for idx, ch in enumerate(self.enabled_channels):
+            arr = np.full((n, rec_len), np.nan, dtype=np.float32)
+            w = waveforms[idx] if idx < len(waveforms) else None
+            if w is not None:
+                arr[0, : w.shape[0]] = w[:rec_len]
+            data[f"ch{ch}"] = arr
+
+        if tr0 is not None and getattr(self.driver, "fast_trigger_digitizing", False):
+            for g in range(self.driver.n_groups):
+                arr = np.full((n, rec_len), np.nan, dtype=np.float32)
+                w = None
+                if isinstance(tr0, (list, tuple)) and g < len(tr0):
+                    w = tr0[g]
+                if w is not None and hasattr(w, "shape"):
+                    arr[0, : w.shape[0]] = w[:rec_len]
+                data[f"tr0_g{g}"] = arr
+
+        return data
