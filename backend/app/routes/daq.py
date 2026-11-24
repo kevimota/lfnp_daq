@@ -135,16 +135,18 @@ _DIGITIZER_CHANNEL_COUNTS = {18: 16, 27: 8}
 
 async def _proxy_to_daq(
     run_id: int,
-    action: str,
+    action: str | None = None,
     method: str = "POST",
     payload: dict | None = None,
 ) -> dict:
     daq_url = config.DAQ_URL
-    url = f"{daq_url}/daq/runs/{run_id}/{action}"
+    url = f"{daq_url}/daq/runs/{run_id}" + (f"/{action}" if action else "")
     try:
         async with httpx.AsyncClient(timeout=60, verify=False) as client:
             if method == "GET":
                 resp = await client.get(url)
+            elif method == "DELETE":
+                resp = await client.delete(url)
             else:
                 resp = await client.post(url, json=payload)
     except httpx.ReadTimeout:
@@ -400,13 +402,34 @@ def update_run(
 
 
 @router.delete("/runs/{run_id}", dependencies=[Depends(get_current_user)])
-def delete_run(run_id: int, session: SessionDep):
+async def delete_run(run_id: int, session: SessionDep):
+    # 1️⃣ Ask the DAQ service to wipe the run directory + cache.
+    try:
+        await _proxy_to_daq(run_id, method="DELETE")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"DAQ delete failed: {exc}")
+
+    # 2️⃣ If the DAQ succeeded, clean up the DB row.
     run = session.get(DAQRuns, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
+    # 3️⃣ Remove the DB row.
     session.delete(run)
     session.commit()
+
+    # 4️⃣ Optional: delete the DAQConfiguration if no other run references it.
+    config = session.get(DAQConfiguration, run.configuration_id)
+    if config is not None:
+        other_runs = session.exec(
+            select(DAQRuns).where(DAQRuns.configuration_id == config.id, DAQRuns.id != run_id)
+        ).all()
+        if not other_runs:
+            session.delete(config)
+            session.commit()
+
     return {"success": True, "message": "Run deleted"}
 
 
@@ -543,7 +566,9 @@ async def start_run(
 
     try:
         result = await _proxy_to_daq(run_id, "start", payload=payload)
-        run.status = "running"
+        # Query DAQ status to set accurate run status
+        status_resp = await _proxy_to_daq(run_id, "status", method="GET")
+        run.status = status_resp.get("state", "running")
         if run.started_at is None:
             run.started_at = datetime.now(UTC)
         run.stopped_at = None
