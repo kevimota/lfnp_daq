@@ -644,7 +644,11 @@ class DigitizerScanner:
 
         # Open ROOT file for incremental writes of this point.
         self._point_root_path = os.path.join(self._run_dir, f"digitizer_point_{self._point_index}.root")
-        self._root_file = uproot.recreate(self._point_root_path)
+        try:
+            self._root_file = uproot.recreate(self._point_root_path)
+        except Exception:
+            _LOG.exception("Failed to create ROOT file %s", self._point_root_path)
+            self._root_file = None
         self._root_tree = None
 
         dev = self.device
@@ -802,9 +806,9 @@ class DigitizerScanner:
             data = self._make_root_event_data(
                 waveforms, scalars, tr0, ts, time_tag, trigger_source
             )
-            if self._root_tree is None:
+            if self._root_file is not None and self._root_tree is None:
                 self._root_tree = self._root_file.mktree("digitizer", data)
-            else:
+            if self._root_file is not None and self._root_tree is not None:
                 self._root_tree.extend(data)
             self._collected += 1
             # In simultaneous mode every event is tagged "mixed"; TR0 digitization
@@ -950,9 +954,10 @@ class DigitizerScanner:
         meta = _meta_to_awkward(meta_fields)
 
         # Write meta and close file.
-        self._root_file["meta"] = meta
-        self._root_file.close()
-        self._root_file = None
+        if self._root_file is not None:
+            self._root_file["meta"] = meta
+            self._root_file.close()
+            self._root_file = None
         self._root_tree = None
 
         _LOG.info(
