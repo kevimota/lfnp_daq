@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     DAQ_HOST: str = "daq-dev"
     DAQ_PORT: int = 8001
     DAQ_API_KEY: str
+    SENSOR_API_KEY: str
     all_cors_origins: bool = True
     FIRST_SUPERUSER: str = "admin"
     FIRST_SUPERUSER_PASSWORD: str = "admin@1234"
