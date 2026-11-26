@@ -640,9 +640,10 @@ async def start_run(
 
     try:
         result = await _proxy_to_daq(run_id, "start", payload=payload)
-        # Query DAQ status to set accurate run status
-        status_resp = await _proxy_to_daq(run_id, "status", method="GET")
-        run.status = status_resp.get("state", "running")
+        # DAQ accepted the start request → the scan is running now.
+        # Its reported state is still "configuring" at this instant and
+        # only advances inside the DAQ background task, so set it here.
+        run.status = "running"
         if run.started_at is None:
             run.started_at = datetime.now(UTC)
         run.stopped_at = None
