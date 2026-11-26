@@ -14,9 +14,13 @@ MAX_SENSOR_BODY_BYTES = 1_000_000
 MAX_SENSOR_LIMIT = 10_000
 
 
-async def verify_sensor_api_key(x_api_key: str = Header(..., alias="X-API-Key")) -> None:
+async def verify_sensor_api_key(
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> None:
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
     if x_api_key != config.SENSOR_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid or missing API key")
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
 
 async def limit_sensor_body_size(request: Request) -> None:
