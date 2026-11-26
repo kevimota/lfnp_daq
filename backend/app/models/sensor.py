@@ -19,5 +19,5 @@ class SensorData(SQLModel, table=True):
 
 
 class SensorDataCreate(SQLModel):
-    name: str
+    name: str = Field(max_length=64)
     data: dict[str, Any] = {}

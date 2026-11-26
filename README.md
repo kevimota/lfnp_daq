@@ -66,6 +66,7 @@ See `.env` for required values:
 | `DATABASE_URL` | PostgreSQL connection string |
 | `DAQ_URL` | DAQ service URL (internal) |
 | `DAQ_API_KEY` | Shared secret between backend and DAQ |
+| `SENSOR_API_KEY` | Shared secret ESP32 sensors use in the `X-API-Key` header |
 | `PUBLIC_API_URL` | Backend URL (browser-facing, REST and WebSocket) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT expiry |
 

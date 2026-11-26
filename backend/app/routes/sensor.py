@@ -1,15 +1,37 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from datetime import datetime, UTC
 from typing import Optional
 from sqlmodel import select
 
+from ..core.config import config
 from ..core.db import SessionDep
 from ..models.sensor import SensorData, SensorDataCreate
 
 router = APIRouter(prefix="/sensor", tags=["Sensor"])
 
+MAX_SENSOR_BODY_BYTES = 1_000_000
+MAX_SENSOR_LIMIT = 10_000
 
-@router.post("")
+
+async def verify_sensor_api_key(
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> None:
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
+    if x_api_key != config.SENSOR_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+
+async def limit_sensor_body_size(request: Request) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_SENSOR_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Sensor payload too large")
+
+
+@router.post(
+    "",
+    dependencies=[Depends(verify_sensor_api_key), Depends(limit_sensor_body_size)],
+)
 def post_sensor_data(req: SensorDataCreate, session: SessionDep):
     record = SensorData(name=req.name, data=req.data)
     session.add(record)
@@ -20,18 +42,19 @@ def post_sensor_data(req: SensorDataCreate, session: SessionDep):
 
 @router.get("/names")
 def get_sensor_names(session: SessionDep):
-    names = session.exec(select(SensorData.name).distinct()).all()
-    result = []
-    for name in names:
-        latest = session.exec(
-            select(SensorData.data)
-            .where(SensorData.name == name)
-            .order_by(SensorData.timestamp.desc())
-            .limit(1)
-        ).first()
-        attributes = list(latest.keys()) if latest else []
-        result.append({"name": name, "attributes": attributes})
-    return result
+    # PostgreSQL DISTINCT ON: latest row per sensor name in one query.
+    latest = session.exec(
+        select(SensorData)
+        .distinct(SensorData.name)
+        .order_by(SensorData.name, SensorData.timestamp.desc())
+    ).all()
+    return [
+        {
+            "name": row.name,
+            "attributes": list(row.data.keys()) if row.data else [],
+        }
+        for row in latest
+    ]
 
 
 @router.get("")
@@ -40,7 +63,7 @@ def get_sensor_data(
     name: Optional[str] = Query(None, description="Filter by sensor name"),
     from_: Optional[datetime] = Query(None, alias="from", description="Start of time range"),
     to: Optional[datetime] = Query(None, description="End of time range"),
-    limit: Optional[int] = Query(None, ge=1, description="Max results (default: all)"),
+    limit: Optional[int] = Query(None, ge=1, description="Max results (default 100, hard cap 10000)"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
 ):
     now = datetime.now(UTC)
@@ -52,8 +75,9 @@ def get_sensor_data(
         raise HTTPException(status_code=422, detail="'to' must be later than 'from'")
 
     if limit is None:
-        if from_ is None and to is None:
-            limit = 100
+        limit = 100 if (from_ is None and to is None) else MAX_SENSOR_LIMIT
+    else:
+        limit = min(limit, MAX_SENSOR_LIMIT)
 
     query = select(SensorData)
 
