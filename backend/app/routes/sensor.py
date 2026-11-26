@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from datetime import datetime, UTC
 from typing import Optional
-from sqlalchemy import select as sa_select
 from sqlmodel import select
 
 from ..core.config import config
@@ -45,7 +44,7 @@ def post_sensor_data(req: SensorDataCreate, session: SessionDep):
 def get_sensor_names(session: SessionDep):
     # PostgreSQL DISTINCT ON: latest row per sensor name in one query.
     latest = session.exec(
-        sa_select(SensorData)
+        select(SensorData)
         .distinct(SensorData.name)
         .order_by(SensorData.name, SensorData.timestamp.desc())
     ).all()
