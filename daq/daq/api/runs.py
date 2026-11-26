@@ -13,7 +13,7 @@ from ..models import DAQStatusResponse, RunStartRequest
 from ..hardware import CaenPSInterface, DigitizerScanner
 from ..scans import SCAN_TYPES
 from . import ScanContext, data_writer, scan_manager, _background_scan
-from .files import invalidate_archive_cache
+from .files import _wipe_run, invalidate_archive_cache
 
 router = APIRouter()
 
@@ -533,3 +533,19 @@ async def resume_scan(run_id: int):
 
     ctx.fsm.resume()
     return {"success": True, "message": "Scan resumed, redoing current point"}
+
+
+@router.delete("/runs/{run_id}")
+async def delete_run(run_id: int):
+    ctx = scan_manager.pop(run_id, None)
+    if ctx is not None:
+        # Best effort stop before wiping the run directory.
+        try:
+            ctx.scanner.stop()
+        except Exception:
+            pass
+
+    run_dir = os.path.join(data_writer.data_path, f"run_{run_id}")
+    _wipe_run(run_dir, run_id)
+    return {"success": True, "message": "Run deleted"}
+
