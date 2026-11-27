@@ -107,7 +107,7 @@ class DAQRuns(SQLModel, table=True):
     __tablename__ = "daq_runs"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    configuration_id: int = Field(default=0)
+    configuration_id: int = Field(default=0, foreign_key="daq_configuration.id")
     status: str = Field(default="running")
     data_path: Optional[str] = None
     label: Optional[str] = None

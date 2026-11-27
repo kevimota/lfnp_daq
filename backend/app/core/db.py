@@ -37,6 +37,9 @@ def init_db(session: Session) -> None:
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS fast_trigger_threshold INTEGER",
         "ALTER TABLE daq_configuration ADD COLUMN IF NOT EXISTS fast_trigger_dc_offset INTEGER",
         "ALTER TABLE daq_configuration DROP COLUMN IF EXISTS digitizer_config",
+        # Add FK constraint on daq_runs.configuration_id (idempotent: ignore
+        # if the constraint already exists).
+        "DO $$ BEGIN ALTER TABLE daq_runs ADD CONSTRAINT fk_daq_runs_configuration_id FOREIGN KEY (configuration_id) REFERENCES daq_configuration (id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
     ):
         with engine.begin() as conn:
             conn.execute(text(statement))

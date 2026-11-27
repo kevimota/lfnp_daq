@@ -23,9 +23,20 @@ async def verify_sensor_api_key(
 
 
 async def limit_sensor_body_size(request: Request) -> None:
+    # Check Content-Length header first for a fast reject.
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_SENSOR_BODY_BYTES:
         raise HTTPException(status_code=413, detail="Sensor payload too large")
+
+    # Read the actual body to enforce the limit regardless of headers
+    # (chunked transfer encoding omits Content-Length).
+    body = await request.body()
+    if len(body) > MAX_SENSOR_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Sensor payload too large")
+
+    # Re-inject the body so FastAPI can parse it again for the route handler.
+    # Starlette caches the body on request._body after the first read.
+    request._body = body
 
 
 @router.post(
