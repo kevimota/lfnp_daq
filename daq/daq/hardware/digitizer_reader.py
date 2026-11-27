@@ -5,7 +5,6 @@ import os
 import time
 from datetime import datetime, UTC
 from typing import Callable, Optional
-from copy import deepcopy
 
 import numpy as np
 import awkward as ak
@@ -50,6 +49,11 @@ _READ_MODE = ReadMode.SLAVE_TERMINATED_READOUT_MBLT
 # Max software triggers coalesced into a single step (protects against clock
 # jumps / long pauses producing a huge catch-up burst at once).
 _MAX_TRIGGERS_PER_STEP = 20
+
+# CAEN status register 0x8104: bit 3 indicates event ready (data available in FIFO).
+# Used to avoid blocking on empty FIFO when reading in external/fast trigger modes.
+_STATUS_REGISTER = 0x8104
+_STATUS_EVENT_READY_BIT = 3
 
 _LOG = logging.getLogger("daq.digitizer")
 
@@ -668,6 +672,21 @@ class DigitizerScanner:
             self._do_begin_point, run_dir, point_index, cfg, hv_channels, run_id
         )
 
+    def _do_pause_acquisition(self):
+        """Stop acquisition while paused to prevent FIFO overflow from hardware
+        triggers. Resume will restart acquisition via begin_point."""
+        if self.device is None:
+            return
+        try:
+            self._trace("sw_stop_acquisition (pause)")
+            self.device.sw_stop_acquisition()
+        except Error:
+            pass
+
+    async def pause_acquisition(self):
+        """Stop acquisition while the scan is paused."""
+        await self._run(self._do_pause_acquisition)
+
     def _update_counts(self) -> None:
         """Recompute goal and random event counts from the raw totals.
 
@@ -725,9 +744,15 @@ class DigitizerScanner:
                     )
         else:
             # No random component; in simultaneous mode the FIFO could be empty
-            # if only external/fast sources are present. Still attempt a read but
-            # don't block indefinitely on an empty FIFO.
-            read_now = True
+            # if only external/fast sources are present. Check the event-ready
+            # bit (status register 0x8104, bit 3) before reading to avoid blocking
+            # indefinitely on an empty FIFO.
+            try:
+                status = dev.read_register(_STATUS_REGISTER)
+                read_now = bool((int(status) >> _STATUS_EVENT_READY_BIT) & 1)
+            except Error:
+                # If the register read fails, skip this step and retry next iteration.
+                read_now = False
 
         n_events = 0
         t0 = time.monotonic()
@@ -781,8 +806,8 @@ class DigitizerScanner:
             self._peaks.append(scalars["peak"])
             self._baselines.append(scalars["baseline"])
             self._charges.append(scalars["charge"])
-            self._waveforms.append(deepcopy(waveforms))
-            self._tr0_waveforms.append(deepcopy(tr0) if tr0 is not None else None)
+            self._waveforms.append(waveforms)
+            self._tr0_waveforms.append(tr0)
             self._collected += 1
             # In simultaneous mode every event is tagged "mixed"; TR0 digitization
             # (tr0_g0/tr0_g1) is stored separately and can be used post-acquisition

@@ -168,9 +168,15 @@ class DigitizerScan(CurrentScanner):
                     )
 
         liveness = asyncio.create_task(_liveness())
+        paused_acquisition = False
         try:
             while not done and not self._stop_requested:
                 while self.fsm.state == DAQState.PAUSED and not self._stop_requested:
+                    if not paused_acquisition:
+                        # Stop acquisition on first pause to prevent FIFO overflow
+                        # from hardware triggers. Resume will restart via begin_point.
+                        await self.digitizer.pause_acquisition()
+                        paused_acquisition = True
                     await asyncio.sleep(0.5)
                 if self._stop_requested:
                     break
@@ -182,6 +188,7 @@ class DigitizerScan(CurrentScanner):
                     samples_recorded = 0
                     last_sample_time = None
                     last_readings = None
+                    paused_acquisition = False
                     await self.digitizer.begin_point(run_dir, point_index, config, point_config, run_id)
 
                 now = time.monotonic()
