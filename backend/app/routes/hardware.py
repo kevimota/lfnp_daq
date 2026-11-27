@@ -63,15 +63,15 @@ def delete_caen_ps(ps_id: int, session: SessionDep):
     if not ps:
         raise HTTPException(status_code=404, detail="Power supply not found")
 
-    # Check if this power supply is referenced by any DAQ configuration
+    # Unlink this power supply from scan configurations so it can be removed
+    # after a hardware failure. Configs keep their other settings.
     configs_using_ps = session.exec(
         select(DAQConfiguration).where(DAQConfiguration.power_supply == ps_id)
     ).all()
-    if configs_using_ps:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot delete: {len(configs_using_ps)} scan configuration(s) reference this power supply",
-        )
+    for cfg in configs_using_ps:
+        cfg.power_supply = None
+        session.add(cfg)
+    session.flush()
 
     session.delete(ps)
     session.commit()
@@ -119,15 +119,15 @@ def delete_caen_digitizer(digitizer_id: int, session: SessionDep):
     if not digitizer:
         raise HTTPException(status_code=404, detail="Digitizer not found")
 
-    # Check if this digitizer is referenced by any DAQ configuration
+    # Unlink this digitizer from scan configurations so it can be removed
+    # after a hardware failure. Configs keep their other settings.
     configs_using_digitizer = session.exec(
         select(DAQConfiguration).where(DAQConfiguration.digitizer_id == digitizer_id)
     ).all()
-    if configs_using_digitizer:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Cannot delete: {len(configs_using_digitizer)} scan configuration(s) reference this digitizer",
-        )
+    for cfg in configs_using_digitizer:
+        cfg.digitizer_id = None
+        session.add(cfg)
+    session.flush()
 
     session.delete(digitizer)
     session.commit()
