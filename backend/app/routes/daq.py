@@ -587,7 +587,8 @@ async def start_run(
         [voltage_points[index] for index in selected_points]
     )
 
-    # Check conflict with other active runs
+    # Check conflict with other active runs on the same power supply.
+    # Channels on different physical power supplies don't conflict.
     active_runs = session.exec(
         select(DAQRuns).where(
             DAQRuns.status.in_(_ACTIVE_RUN_STATUSES),
@@ -597,10 +598,14 @@ async def start_run(
 
     busy_channels = []
     conflicting_run_ids = []
+    requested_ps = config.power_supply
 
     for other in active_runs:
         other_config = session.get(DAQConfiguration, other.configuration_id)
         if not other_config:
+            continue
+        # Only check HV channels if both runs use the same power supply
+        if other_config.power_supply != requested_ps:
             continue
         other_channels = _extract_channels(other_config.voltage_points)
         overlap = requested & other_channels
