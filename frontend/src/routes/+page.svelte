@@ -32,6 +32,7 @@
   let chartConfigs: ChartConfig[] = $state([]);
   let sensorReadings = $state<Record<string, SensorReading[]>>({});
   let sensorCharts: Chart[] = $state([]);
+  let chartSignature = '';
 
   let scanInterval: ReturnType<typeof setInterval>;
   let systemInterval: ReturnType<typeof setInterval>;
@@ -69,25 +70,42 @@
     return (bytes / 1_073_741_824).toFixed(1) + ' GB';
   }
 
+  // A running scan's configuration cannot change, so cache it across polls.
+  const configCache = new Map<number, any>();
+
+  async function getConfig(configId: number) {
+    if (!configCache.has(configId)) {
+      try {
+        const { data } = await api.get(`/daq/configs/${configId}`);
+        configCache.set(configId, data);
+      } catch {
+        return null;
+      }
+    }
+    return configCache.get(configId);
+  }
+
   async function fetchOngoingScans() {
     let scans: any[] = [];
     try {
       const { data } = await api.get('/daq/runs', { params: { per_page: 50 } });
       scans = data.items.filter((r: ScanRun) => r.status === 'running');
+      recentRuns = data.items.filter((r: ScanRun) => r.status !== 'running').slice(0, 5);
     } catch {}
     const chSets: Record<number, Set<string>> = {};
-    for (const scan of scans) {
-      try { const resp = await api.get(`/daq/runs/${scan.id}/status`); scan.state = resp.data.state; scan.hv_point = resp.data.hv_point; } catch {}
-      try {
-        const { data: config } = await api.get(`/daq/configs/${scan.configuration_id}`);
-        if (config.power_supply && config.voltage_points) {
-          const set = (chSets[config.power_supply] ??= new Set<string>());
-          for (const point of config.voltage_points) {
-            for (const ch of point) { set.add(`${ch.slot}:${ch.channel}`); }
-          }
+    await Promise.all(scans.map(async (scan) => {
+      const [status, config] = await Promise.all([
+        api.get(`/daq/runs/${scan.id}/status`).then((r) => r.data).catch(() => null),
+        getConfig(scan.configuration_id),
+      ]);
+      if (status) { scan.state = status.state; scan.hv_point = status.hv_point; }
+      if (config?.power_supply && config.voltage_points) {
+        const set = (chSets[config.power_supply] ??= new Set<string>());
+        for (const point of config.voltage_points) {
+          for (const ch of point) { set.add(`${ch.slot}:${ch.channel}`); }
         }
-      } catch {}
-    }
+      }
+    }));
     const chMap: Record<number, { slot: number; channel: number }[]> = {};
     for (const [psId, keys] of Object.entries(chSets)) {
       chMap[Number(psId)] = [...keys]
@@ -103,10 +121,6 @@
 
   async function fetchSystemData() {
     try { const { data: psData } = await api.get('/hardware/caen-ps'); powerSupplies = psData; } catch {}
-    try {
-      const { data: runsData } = await api.get('/daq/runs', { params: { per_page: 5 } });
-      recentRuns = runsData.items.filter((r: ScanRun) => r.status !== 'running').slice(0, 5);
-    } catch {}
     try { const { data: healthData } = await api.get('/system/health'); health = healthData; } catch {}
     try { const { data: storageData } = await api.get('/system/storage'); storage = storageData; } catch {}
   }
@@ -138,6 +152,21 @@
   }
 
   async function updateSensorCharts() {
+    const signature = chartConfigs.map(c => `${c.sensor}|${c.attribute}|${c.unit}`).join(';');
+
+    // Same charts: update the data in place so hover/tooltip state survives.
+    if (signature === chartSignature && sensorCharts.length === chartConfigs.length && sensorCharts.length > 0) {
+      for (let i = 0; i < sensorCharts.length; i++) {
+        const cfg = chartConfigs[i];
+        const readings = sensorReadings[cfg.sensor] ?? [];
+        sensorCharts[i].data.labels = readings.map(r => new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        sensorCharts[i].data.datasets[0].data = readings.map(r => r.data[cfg.attribute] ?? null);
+        sensorCharts[i].update('none');
+      }
+      return;
+    }
+    chartSignature = signature;
+
     for (const c of sensorCharts) c.destroy();
 
     if (chartConfigs.length === 0 || Object.keys(sensorReadings).length === 0) {

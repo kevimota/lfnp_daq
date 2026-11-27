@@ -4,6 +4,8 @@
   import { auth, userInfo } from '$lib/auth';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
 
   interface SensorInfo {
     name: string;
@@ -27,7 +29,7 @@
     await auth.init();
     if (!$userInfo?.is_superuser) {
       toast.error('Only admins can access settings');
-      auth.logout();
+      goto(resolve('/'));
       return;
     }
     try {
