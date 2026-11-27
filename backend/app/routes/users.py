@@ -137,7 +137,7 @@ def patch_user_me(
         )
         if existing_user and existing_user.id != current_user.id:
             raise HTTPException(
-                status_code=409, detail="User with this email already exists"
+                status_code=409, detail="User with this username already exists"
             )
     if user_in.email:
         existing_user = auth.get_user_by_email(session=session, email=user_in.email)
@@ -230,7 +230,7 @@ def update_user_by_id(session: SessionDep, user_id: UUID, user_in: UserUpdateId)
         )
         if existing_user and existing_user.id != user_id:
             raise HTTPException(
-                status_code=409, detail="User with this email already exists"
+                status_code=409, detail="User with this username already exists"
             )
     if user_in.email:
         existing_user = auth.get_user_by_email(session=session, email=user_in.email)
