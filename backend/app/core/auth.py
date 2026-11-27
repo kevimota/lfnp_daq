@@ -8,7 +8,7 @@ import jwt
 from pwdlib import PasswordHash
 
 from .config import config
-from ..models.auth import User, UserBase, UserCreate, UserUpdateId
+from ..models.auth import User, UserBase, UserUpdateId
 
 password_hash = PasswordHash.recommended()
 
@@ -64,10 +64,6 @@ def create_user_with_password(
     session.commit()
     session.refresh(db_obj)
     return db_obj
-
-
-def create_user(session: Session, user_create: UserCreate) -> User:
-    return create_user_with_password(session, user_create, user_create.password)
 
 
 def set_user_password(session: Session, db_user: User, password: str) -> User:

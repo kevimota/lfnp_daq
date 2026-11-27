@@ -5,7 +5,7 @@ from fastapi import Depends
 
 from .config import config
 from ..models.auth import User, UserCreate
-from .auth import create_user
+from .auth import create_user_with_password
 
 engine = create_engine(str(config.DATABASE_URL))
 
@@ -55,4 +55,4 @@ def init_db(session: Session) -> None:
             email=config.FIRST_SUPERUSER_EMAIL,
             is_superuser=True,
         )
-        user = create_user(session, user_in)
+        user = create_user_with_password(session, user_in, user_in.password)

@@ -28,12 +28,6 @@ class AdminUserCreate(UserBase):
     is_superuser: bool = False
 
 
-class UserRegister(SQLModel):
-    email: EmailStr = Field(max_length=255)
-    password: str = Field(min_length=8, max_length=128)
-    full_name: str | None = Field(default=None, max_length=255)
-
-
 # Properties to receive via API on update, all are optional.
 # Defined as standalone models (not inheriting UserBase) so partial PATCH
 # requests don't require `username` / `email` or reset `is_active` to True
@@ -100,10 +94,6 @@ class Token(SQLModel):
 class TokenPayload(SQLModel):
     sub: str | None = None
 
-
-class NewPassword(SQLModel):
-    token: str
-    new_password: str = Field(min_length=8, max_length=128)
 
 class Message(SQLModel):
     message: str
