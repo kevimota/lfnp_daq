@@ -1,6 +1,6 @@
 from typing import Annotated, Any
 
-from fastapi import HTTPException, APIRouter, Depends, Response, status
+from fastapi import HTTPException, APIRouter, Depends, Query, Response, status
 
 import jwt
 from pydantic import ValidationError
@@ -29,7 +29,7 @@ from ..models.auth import (
 from sqlmodel import col, func, select
 
 
-def get_current_user(session: SessionDep, token: TokenDep) -> User:
+def _user_from_token(session: SessionDep, token: str) -> User:
     try:
         payload = jwt.decode(token, config.SECRET_KEY, algorithms=[config.ALGORITHM])
         token_data = TokenPayload(**payload)
@@ -44,6 +44,16 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
+
+
+def get_current_user(session: SessionDep, token: TokenDep) -> User:
+    return _user_from_token(session, token)
+
+
+def get_current_user_from_query(session: SessionDep, token: str = Query(...)) -> User:
+    # Browser downloads are plain navigations and cannot set an Authorization
+    # header, so these endpoints take the JWT as a query parameter.
+    return _user_from_token(session, token)
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

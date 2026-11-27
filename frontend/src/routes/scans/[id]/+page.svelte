@@ -759,8 +759,9 @@
   // disk with native progress and constant memory, instead of being buffered
   // into a JS Blob first (which is very slow/memory-hungry for large runs).
   function triggerBrowserDownload(path: string, filename: string) {
+    const token = localStorage.getItem('access_token');
     const a = document.createElement('a');
-    a.href = `${apiBase()}${path}`;
+    a.href = `${apiBase()}${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     a.download = filename;
     // New tab: a successful response downloads via Content-Disposition; an
     // error response opens in a tab instead of replacing the current page.

@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select, func
 from typing import List, Optional
 from datetime import datetime, UTC
-from ..routes.users import get_current_user
+from ..routes.users import get_current_user, get_current_user_from_query
 import asyncio
 import httpx
 import json
@@ -118,12 +118,20 @@ async def health_check():
 # ── Configurations (read-only browse) ───────────────────────────
 
 
-@router.get("/configs", response_model=List[DAQConfigResponse])
+@router.get(
+    "/configs",
+    response_model=List[DAQConfigResponse],
+    dependencies=[Depends(get_current_user)],
+)
 def list_configurations(session: SessionDep):
     return session.exec(select(DAQConfiguration)).all()
 
 
-@router.get("/configs/{config_id}", response_model=DAQConfigResponse)
+@router.get(
+    "/configs/{config_id}",
+    response_model=DAQConfigResponse,
+    dependencies=[Depends(get_current_user)],
+)
 def get_configuration(config_id: int, session: SessionDep):
     config = session.get(DAQConfiguration, config_id)
     if not config:
@@ -420,7 +428,11 @@ def create_run(req: RunCreateRequest, session: SessionDep):
     return run
 
 
-@router.get("/runs", response_model=PaginatedRunsResponse)
+@router.get(
+    "/runs",
+    response_model=PaginatedRunsResponse,
+    dependencies=[Depends(get_current_user)],
+)
 def list_runs(
     session: SessionDep,
     page: int = Query(1, ge=1),
@@ -442,7 +454,11 @@ def list_runs(
     )
 
 
-@router.get("/runs/{run_id}", response_model=DAQRunResponse)
+@router.get(
+    "/runs/{run_id}",
+    response_model=DAQRunResponse,
+    dependencies=[Depends(get_current_user)],
+)
 def get_run(run_id: int, session: SessionDep):
     run = session.get(DAQRuns, run_id)
     if not run:
@@ -716,25 +732,25 @@ async def resume_run(run_id: int, session: SessionDep):
     )
 
 
-@router.get("/runs/{run_id}/status")
+@router.get("/runs/{run_id}/status", dependencies=[Depends(get_current_user)])
 async def get_run_status(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
     return await _proxy_to_daq(run_id, "status", method="GET")
 
 
-@router.get("/runs/{run_id}/progress")
+@router.get("/runs/{run_id}/progress", dependencies=[Depends(get_current_user)])
 async def get_run_progress(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
     return await _proxy_to_daq(run_id, "progress", method="GET")
 
 
-@router.get("/runs/{run_id}/info")
+@router.get("/runs/{run_id}/info", dependencies=[Depends(get_current_user)])
 async def get_run_info(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
     return await _proxy_to_daq(run_id, "info", method="GET")
 
 
-@router.get("/runs/{run_id}/log")
+@router.get("/runs/{run_id}/log", dependencies=[Depends(get_current_user)])
 async def get_run_log(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
     daq_url = config.DAQ_URL
@@ -749,7 +765,7 @@ async def get_run_log(run_id: int, session: SessionDep):
     return Response(content="", media_type="text/plain")
 
 
-@router.get("/runs/{run_id}/files")
+@router.get("/runs/{run_id}/files", dependencies=[Depends(get_current_user)])
 async def list_run_files(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
     daq_url = config.DAQ_URL
@@ -819,7 +835,10 @@ async def _stream_from_daq(
     return StreamingResponse(iterator(), media_type=media_type, headers=headers)
 
 
-@router.get("/runs/{run_id}/files/{filename:path}")
+@router.get(
+    "/runs/{run_id}/files/{filename:path}",
+    dependencies=[Depends(get_current_user_from_query)],
+)
 async def download_run_file(run_id: int, filename: str, session: SessionDep):
     _check_run_exists(run_id, session)
     url = f"{config.DAQ_URL}/daq/runs/{run_id}/files/{quote(filename)}"
@@ -827,7 +846,10 @@ async def download_run_file(run_id: int, filename: str, session: SessionDep):
     return await _stream_from_daq(url, "application/octet-stream", filename=basename)
 
 
-@router.get("/runs/{run_id}/download")
+@router.get(
+    "/runs/{run_id}/download",
+    dependencies=[Depends(get_current_user_from_query)],
+)
 async def download_run_archive(run_id: int, session: SessionDep):
     _check_run_exists(run_id, session)
     url = f"{config.DAQ_URL}/daq/runs/{run_id}/download"
