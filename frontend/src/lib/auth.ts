@@ -1,6 +1,5 @@
 import { writable, derived } from 'svelte/store';
 import { toast } from './toast';
-import { goto } from '$app/navigation';
 import { browser } from '$app/environment';
 import api from './api';
 
@@ -17,16 +16,6 @@ function createAuthStore() {
 
   const token = writable<string | null>(storedToken);
   const userInfo = writable<UserInfo | null>(null);
-
-  function handleUnauthorized() {
-    token.set(null);
-    userInfo.set(null);
-    if (browser) {
-      localStorage.removeItem('access_token');
-    }
-    toast.warning('Your session has expired. Please log in again.');
-    goto('/');
-  }
 
   async function fetchUserInfo() {
     try {
@@ -56,7 +45,6 @@ function createAuthStore() {
   return {
     token,
     userInfo,
-    handleUnauthorized,
 
     async login(username: string, password: string): Promise<{ success: boolean; error?: string }> {
       const formData = new URLSearchParams();

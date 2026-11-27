@@ -183,7 +183,6 @@
   let supplies: PowerSupply[] = $state([]);
   let digitizers: CaenDigitizer[] = $state([]);
   let activeTab = $state('monitor');
-  let configJson = $state('');
   let useJsonEditor = $state(false);
   let editJson = $state('');
   let editScanType = $state<'hv_scan' | 'digitizer_scan'>('hv_scan');
@@ -345,7 +344,6 @@
       editTriggerModeThresholdMv = tr0ThresholdCodeToMv(editTriggerModeThreshold);
       editTriggerModeDcOffset = data.fast_trigger_dc_offset ?? 0x8000;
       editTriggerModeDcOffsetMv = tr0DcOffsetCodeToMv(editTriggerModeDcOffset);
-      configJson = JSON.stringify(data.voltage_points, null, 2);
     } catch {}
   }
 
