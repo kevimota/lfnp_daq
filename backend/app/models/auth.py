@@ -34,15 +34,22 @@ class UserRegister(SQLModel):
     full_name: str | None = Field(default=None, max_length=255)
 
 
-# Properties to receive via API on update, all are optional
-class UserUpdate(UserBase):
+# Properties to receive via API on update, all are optional.
+# Defined as standalone models (not inheriting UserBase) so partial PATCH
+# requests don't require `username` / `email` or reset `is_active` to True
+# when omitted.
+class UserUpdate(SQLModel):
+    username: str | None = Field(default=None, max_length=30)
+    email: EmailStr | None = Field(default=None, max_length=255)
     full_name: str | None = Field(default=None, max_length=255)
-    email: EmailStr | None = Field(default=None, max_length=255)  # type: ignore[assignment]
 
-class UserUpdateId(UserBase):
-    is_superuser: bool | None = Field(default=False)
+
+class UserUpdateId(SQLModel):
+    username: str | None = Field(default=None, max_length=30)
+    email: EmailStr | None = Field(default=None, max_length=255)
     full_name: str | None = Field(default=None, max_length=255)
-    email: EmailStr | None = Field(default=None, max_length=255)  # type: ignore[assignment]
+    is_active: bool | None = None
+    is_superuser: bool | None = None
 
 
 class UpdatePassword(SQLModel):
