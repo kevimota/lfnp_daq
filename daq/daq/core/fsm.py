@@ -150,7 +150,7 @@ class DAQFSM:
         return True
 
     def to_recording(self) -> bool:
-        if self._state != DAQState.WAITING:
+        if self._state not in (DAQState.WAITING, DAQState.CONFIGURING):
             return False
 
         point_num = self._current_point_index + 1

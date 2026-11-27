@@ -70,7 +70,7 @@
     post_trigger_size: 0,
     dc_offset_mv: 0,
     channels: [] as DigitizerChannel[],
-    fast_trigger_digitizing: true,
+    fast_trigger_digitizing: true,  // Default to ON when fast trigger is active
     fast_trigger_threshold: 0x6666,
     fast_trigger_threshold_mv: 0,
     fast_trigger_dc_offset: 0x8000,
@@ -479,7 +479,7 @@
       post_trigger_size: 0,
       dc_offset_mv: 0,
       channels: [] as DigitizerChannel[],
-      fast_trigger_digitizing: false,
+      fast_trigger_digitizing: true,
       fast_trigger_threshold: 0x6666,
       fast_trigger_threshold_mv: 0,
       fast_trigger_dc_offset: 0x8000,
