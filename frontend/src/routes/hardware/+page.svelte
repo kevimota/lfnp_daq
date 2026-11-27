@@ -3,6 +3,7 @@
   import { Plus, Pencil, Trash2, ArrowLeft } from '@lucide/svelte';
   import api from '$lib/api';
   import { toast } from '$lib/toast';
+  import { formatApiError } from '$lib/apiError';
 
   interface PowerSupply {
     id: number;
@@ -112,8 +113,11 @@
     if (!confirm(`Delete power supply "${ps.name}"?`)) return;
     try {
       await api.delete(`/hardware/caen-ps/${ps.id}`);
+      toast.success(`Power supply "${ps.name}" deleted`);
       await fetchSupplies();
-    } catch {}
+    } catch (err: any) {
+      toast.error(formatApiError(err, 'Failed to delete power supply'));
+    }
   }
 
   function resetForm() {
@@ -232,8 +236,11 @@
     if (!confirm(`Delete digitizer "${d.name}"?`)) return;
     try {
       await api.delete(`/hardware/caen-digitizers/${d.id}`);
+      toast.success(`Digitizer "${d.name}" deleted`);
       await fetchDigitizers();
-    } catch {}
+    } catch (err: any) {
+      toast.error(formatApiError(err, 'Failed to delete digitizer'));
+    }
   }
 
   async function testDigitizer(d: Digitizer) {

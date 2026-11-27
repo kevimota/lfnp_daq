@@ -17,6 +17,7 @@ from ..models.hardware import (
     CaenDigitizerResponse,
     CaenDigitizerScan,
 )
+from ..models.daq import DAQConfiguration
 
 router = APIRouter(prefix="/hardware", dependencies=[Depends(get_current_user)], tags=["Hardware"])
 
@@ -61,6 +62,17 @@ def delete_caen_ps(ps_id: int, session: SessionDep):
     ps = session.get(CaenPS, ps_id)
     if not ps:
         raise HTTPException(status_code=404, detail="Power supply not found")
+
+    # Check if this power supply is referenced by any DAQ configuration
+    configs_using_ps = session.exec(
+        select(DAQConfiguration).where(DAQConfiguration.power_supply == ps_id)
+    ).all()
+    if configs_using_ps:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete: {len(configs_using_ps)} scan configuration(s) reference this power supply",
+        )
+
     session.delete(ps)
     session.commit()
     return {"success": True, "message": "Power supply deleted"}
@@ -106,6 +118,17 @@ def delete_caen_digitizer(digitizer_id: int, session: SessionDep):
     digitizer = session.get(CaenDigitizer, digitizer_id)
     if not digitizer:
         raise HTTPException(status_code=404, detail="Digitizer not found")
+
+    # Check if this digitizer is referenced by any DAQ configuration
+    configs_using_digitizer = session.exec(
+        select(DAQConfiguration).where(DAQConfiguration.digitizer_id == digitizer_id)
+    ).all()
+    if configs_using_digitizer:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete: {len(configs_using_digitizer)} scan configuration(s) reference this digitizer",
+        )
+
     session.delete(digitizer)
     session.commit()
     return {"success": True, "message": "Digitizer deleted"}
