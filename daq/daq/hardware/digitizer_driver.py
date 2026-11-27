@@ -42,7 +42,6 @@ from caen_libs.caendigitizer import (
     lib,
 )
 from caen_libs._caendigitizertypes import (
-    MAX_X742_GROUP_SIZE,
     BoardModel,
 )
 

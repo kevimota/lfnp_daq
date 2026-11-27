@@ -1,6 +1,5 @@
 from fastapi import WebSocket
 from typing import List
-import asyncio
 import json
 
 
@@ -36,23 +35,3 @@ class DataBroadcaster:
         # Clean up disconnected clients
         for client in disconnected:
             self.remove_client(client)
-
-    async def broadcast_raw(self, message: str):
-        """Broadcast a raw string message to all clients."""
-        if not self.clients:
-            return
-
-        disconnected = []
-
-        for client in self.clients:
-            try:
-                await client.send_text(message)
-            except Exception:
-                disconnected.append(client)
-
-        for client in disconnected:
-            self.remove_client(client)
-
-    def client_count(self) -> int:
-        """Get the number of connected clients."""
-        return len(self.clients)

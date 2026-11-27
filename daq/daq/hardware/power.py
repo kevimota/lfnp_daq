@@ -116,10 +116,6 @@ class CaenPSInterface:
         finally:
             self.device = None
 
-    def is_connected(self) -> bool:
-        """Check if connected to the device."""
-        return self.device is not None
-
     def set_voltage(self, slot: int, channel: int, voltage: float) -> bool:
         """Set voltage on a specific slot and channel."""
         if self.device is None:
