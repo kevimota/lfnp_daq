@@ -32,6 +32,7 @@
   let chartConfigs: ChartConfig[] = $state([]);
   let sensorReadings = $state<Record<string, SensorReading[]>>({});
   let sensorCharts: Chart[] = $state([]);
+  let chartSignature = '';
 
   let scanInterval: ReturnType<typeof setInterval>;
   let systemInterval: ReturnType<typeof setInterval>;
@@ -151,6 +152,21 @@
   }
 
   async function updateSensorCharts() {
+    const signature = chartConfigs.map(c => `${c.sensor}|${c.attribute}|${c.unit}`).join(';');
+
+    // Same charts: update the data in place so hover/tooltip state survives.
+    if (signature === chartSignature && sensorCharts.length === chartConfigs.length && sensorCharts.length > 0) {
+      for (let i = 0; i < sensorCharts.length; i++) {
+        const cfg = chartConfigs[i];
+        const readings = sensorReadings[cfg.sensor] ?? [];
+        sensorCharts[i].data.labels = readings.map(r => new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        sensorCharts[i].data.datasets[0].data = readings.map(r => r.data[cfg.attribute] ?? null);
+        sensorCharts[i].update('none');
+      }
+      return;
+    }
+    chartSignature = signature;
+
     for (const c of sensorCharts) c.destroy();
 
     if (chartConfigs.length === 0 || Object.keys(sensorReadings).length === 0) {

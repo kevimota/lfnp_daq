@@ -29,6 +29,7 @@
   let toDatetime = $state('');
   let loading = $state(false);
   let charts: Chart[] = $state([]);
+  let chartSignature = '';
 
   function timeFilterActive() {
     return fromDatetime !== '' || toDatetime !== '';
@@ -111,6 +112,21 @@
   }
 
   async function updateCharts() {
+    const signature = `${selectedSensor}|${selectedAttributes.join(',')}`;
+
+    // Same charts: update the data in place so hover/tooltip state survives.
+    if (signature === chartSignature && charts.length === selectedAttributes.length && charts.length > 0) {
+      const labels = readings.map(r => new Date(r.timestamp).toLocaleString(undefined, { timeZoneName: 'short' }));
+      for (let i = 0; i < charts.length; i++) {
+        const attr = selectedAttributes[i];
+        charts[i].data.labels = labels;
+        charts[i].data.datasets[0].data = readings.map(r => r.data[attr] ?? null);
+        charts[i].update('none');
+      }
+      return;
+    }
+    chartSignature = signature;
+
     for (const c of charts) c.destroy();
     charts = [];
 
